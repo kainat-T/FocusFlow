@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import '../services/auth_service.dart';
+import 'profile_screen.dart';
 
 // ---------------------------------------------------------------------------
 // Colour palette (mirrors main.dart FFColors)
@@ -524,18 +526,17 @@ class _HomeScreenState extends State<HomeScreen> {
                         size: 36, color: _C.subText),
                   ),
                   const SizedBox(height: 12),
-                  const Text(
-                    'Focus Flow',
-                    style: TextStyle(
+                  Text(
+                    AuthService().currentUser?.displayName ?? 'Focus Flow',
+                    style: const TextStyle(
                         color: _C.text,
                         fontSize: 18,
                         fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 2),
-                  const Text(
-                    'Stay focused, stay ahead',
-                    style:
-                        TextStyle(color: _C.subText, fontSize: 12),
+                  Text(
+                    AuthService().currentUser?.email ?? 'Stay focused, stay ahead',
+                    style: const TextStyle(color: _C.subText, fontSize: 12),
                   ),
                 ],
               ),
@@ -551,7 +552,11 @@ class _HomeScreenState extends State<HomeScreen> {
               label: 'Profile',
               onTap: () {
                 Navigator.pop(context);
-                _showSnack('Profile – coming soon');
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const ProfileScreen()),
+                );
               },
             ),
             _drawerItem(
@@ -581,9 +586,10 @@ class _HomeScreenState extends State<HomeScreen> {
               label: 'Logout',
               iconColor: Colors.redAccent,
               labelColor: Colors.redAccent,
-              onTap: () {
-                Navigator.pop(context);
-                _showSnack('Logged out');
+              onTap: () async {
+                Navigator.pop(context); // close drawer first
+                await AuthService().logout();
+                // AuthGate's StreamBuilder handles the redirect to LoginScreen
               },
             ),
             const SizedBox(height: 16),
