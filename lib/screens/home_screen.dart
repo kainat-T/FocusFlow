@@ -6,6 +6,7 @@ import '../services/auth_service.dart';
 import '../services/session_service.dart';
 import 'profile_screen.dart';
 import 'sessions_screen.dart';
+import 'tasks_screen.dart';
 
 // ---------------------------------------------------------------------------
 // Colour palette (mirrors main.dart FFColors)
@@ -748,15 +749,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ── Placeholder for non-home tabs ─────────────────────────────────────────
   Widget _buildPlaceholder(NavTab tab) {
-    if (tab == NavTab.sessions) {
-      final uid = AuthService().currentUser?.uid ?? '';
-      return SessionsScreen(uid: uid);
-    }
+    final uid = AuthService().currentUser?.uid ?? '';
+
+    if (tab == NavTab.sessions) return SessionsScreen(uid: uid);
+    if (tab == NavTab.tasks)    return TasksScreen(uid: uid, initialSubjects: List<String>.from(_subjects));
 
     final labels = {
-      NavTab.stats: ('Weekly Study Stats', Icons.bar_chart),
-      NavTab.progress: ('Progress Dashboard', Icons.trending_up),
-      NavTab.tasks: ('Task Management', Icons.task_alt),
+      NavTab.stats:    ('Weekly Study Stats',  Icons.bar_chart),
+      NavTab.progress: ('Progress Dashboard',  Icons.trending_up),
     };
     final info = labels[tab]!;
     return Center(
