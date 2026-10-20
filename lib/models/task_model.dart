@@ -12,6 +12,7 @@ class TaskModel {
   final bool isDone;
   final DateTime createdAt;
   final DateTime? dueDate;
+  final DateTime? completedAt; // set when isDone is toggled true
 
   const TaskModel({
     required this.id,
@@ -23,6 +24,7 @@ class TaskModel {
     required this.isDone,
     required this.createdAt,
     this.dueDate,
+    this.completedAt,
   });
 
   // ── Firestore serialisation ────────────────────────────────────────────────
@@ -35,6 +37,8 @@ class TaskModel {
         'isDone': isDone,
         'createdAt': Timestamp.fromDate(createdAt),
         'dueDate': dueDate != null ? Timestamp.fromDate(dueDate!) : null,
+        'completedAt':
+            completedAt != null ? Timestamp.fromDate(completedAt!) : null,
       };
 
   factory TaskModel.fromDoc(DocumentSnapshot doc) {
@@ -54,6 +58,9 @@ class TaskModel {
       dueDate: d['dueDate'] != null
           ? (d['dueDate'] as Timestamp).toDate()
           : null,
+      completedAt: d['completedAt'] != null
+          ? (d['completedAt'] as Timestamp).toDate()
+          : null,
     );
   }
 
@@ -65,9 +72,11 @@ class TaskModel {
     TaskPriority? priority,
     bool? isDone,
     DateTime? dueDate,
+    DateTime? completedAt,
     bool clearSubject = false,
     bool clearDueDate = false,
     bool clearDescription = false,
+    bool clearCompletedAt = false,
   }) =>
       TaskModel(
         id: id,
@@ -80,6 +89,8 @@ class TaskModel {
         isDone: isDone ?? this.isDone,
         createdAt: createdAt,
         dueDate: clearDueDate ? null : (dueDate ?? this.dueDate),
+        completedAt:
+            clearCompletedAt ? null : (completedAt ?? this.completedAt),
       );
 
   // ── Display helpers ────────────────────────────────────────────────────────
@@ -102,4 +113,19 @@ class TaskModel {
       dueDate != null &&
       !isDone &&
       dueDate!.isBefore(DateTime.now());
+
+  /// Label for when this task was completed, e.g. "Today", "Yesterday", "3 Jan"
+  String get completedAtLabel {
+    if (completedAt == null) return '';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final d = DateTime(completedAt!.year, completedAt!.month, completedAt!.day);
+    if (d == today) return 'Today';
+    if (d == today.subtract(const Duration(days: 1))) return 'Yesterday';
+    const months = [
+      'Jan','Feb','Mar','Apr','May','Jun',
+      'Jul','Aug','Sep','Oct','Nov','Dec'
+    ];
+    return '${completedAt!.day} ${months[completedAt!.month - 1]}';
+  }
 }

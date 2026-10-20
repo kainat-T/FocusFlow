@@ -1,6 +1,6 @@
 # Focus Flow
 
-A Flutter productivity app built around focused study sessions. Set a timer, pick a subject, let it run — sessions are recorded automatically and available to review any time.
+A Flutter productivity app built around focused study sessions. Set a timer, pick a subject, let it run — sessions are recorded automatically and available to review any time. Also manage tasks, view weekly stats, and customize the app theme.
 
 ---
 
@@ -27,6 +27,17 @@ A Flutter productivity app built around focused study sessions. Set a timer, pic
 - Each card shows the subject (or "Focus Session"), completion time, and a duration badge
 - Empty state when no sessions have been recorded yet
 
+### Task Management
+- Add, edit, and delete tasks with titles, optional notes, subject, priority (Low / Medium / High), and due date
+- Tabbed views: **All · Pending · Done**
+- Swipe to delete, tap to toggle completion, subject filter chip
+- Tasks are stored in Firestore under `users/{uid}/tasks`
+
+### Weekly Stats
+- Bar chart of tasks completed over the last 7 days (built with `fl_chart`)
+- Summary cards: total tasks this week and best day
+- Daily breakdown with today highlighted
+
 ### Authentication
 - Email/password sign-up and sign-in via Firebase Auth
 - Re-authentication before account deletion (no "requires recent login" errors)
@@ -37,9 +48,12 @@ A Flutter productivity app built around focused study sessions. Set a timer, pic
 - Displays name, email, and user ID
 - Delete account option at the bottom with a password confirmation dialog
 
-### Navigation
-- Bottom navigation bar with 5 tabs: **Timer · Stats · Progress · Sessions · Tasks**
-- Sidebar drawer: Profile, App Theme, Settings, Logout
+### App Themes
+- Curated themes: **Deep Amethyst** (dark) and **Light Lavender** (light)
+- Theme preference persisted locally via `shared_preferences`
+- Theme picker in the sidebar drawer
+
+
 
 ---
 
@@ -51,21 +65,28 @@ lib/
 ├── firebase_options.dart      # FlutterFire-generated platform config
 │
 ├── models/
-│   └── session_model.dart     # Session data class with Firestore serialization
+│   ├── session_model.dart     # Session data class with Firestore serialization
+│   └── task_model.dart        # Task data class (title, subject, priority, due date, etc.)
 │
 ├── screens/
 │   ├── home_screen.dart       # Timer, subject selector, duration picker, nav bar, drawer
 │   ├── login_screen.dart      # Email/password sign-in
 │   ├── register_screen.dart   # Account creation
 │   ├── profile_screen.dart    # User info + delete account
-│   └── sessions_screen.dart   # Completed sessions list (real-time stream)
+│   ├── sessions_screen.dart   # Completed sessions list (real-time stream)
+│   ├── stats_screen.dart      # Weekly task stats with bar chart
+│   └── tasks_screen.dart      # Task management (add/edit/delete/filter/toggle)
 │
 ├── services/
 │   ├── auth_service.dart      # Firebase Auth: register, login, logout, deleteAccount
-│   └── session_service.dart   # Firestore: saveSession, getSessions, sessionsStream
+│   ├── notification_service.dart  # Local session reminders + FCM handling
+│   ├── session_service.dart   # Firestore: saveSession, getSessions, sessionsStream
+│   ├── task_service.dart      # Firestore: add/update/delete/toggle tasks, tasksStream
+│   └── theme_service.dart     # Theme switching + persistence (shared_preferences)
 │
 └── widgets/
-    └── auth_gate.dart         # StreamBuilder routing: HomeScreen or LoginScreen
+    ├── auth_gate.dart         # StreamBuilder routing: HomeScreen or LoginScreen
+    └── background_pattern.dart# Subtle dot-grid CustomPaint background
 ```
 
 ---
@@ -76,20 +97,14 @@ lib/
 |---|---|---|
 | `firebase_core` | ^4.15.0 | Firebase initialization |
 | `firebase_auth` | ^6.7.0 | Email/password authentication |
-| `cloud_firestore` | ^6.10.0 | Session storage per user |
-| `firebase_analytics` | ^12.6.0 | Usage analytics |
-| `shared_preferences` | ^2.5.5 | Local persistence for subjects |
-| `cupertino_icons` | ^1.0.8 | iOS-style icons |
+| `cloud_firestore` | ^6.10.0 | Session & task storage per user |
+
 
 ---
 
 ## Getting Started
 
-### Prerequisites
-- Flutter SDK `^3.11.0`
-- A Firebase project with **Email/Password** sign-in enabled
-- `google-services.json` placed in `android/app/`
-- `GoogleService-Info.plist` placed in `ios/Runner/`
+
 
 ### Firebase Setup
 1. Create a project at [console.firebase.google.com](https://console.firebase.google.com)
@@ -104,6 +119,10 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == uid;
 
       match /sessions/{sessionId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
+
+      match /tasks/{taskId} {
         allow read, write: if request.auth != null && request.auth.uid == uid;
       }
     }
@@ -125,10 +144,3 @@ flutter run
 
 ---
 
-## Planned Features
-
-- Weekly study stats screen
-- Progress dashboard
-- Task management per subject
-- App theme switching (light / dark / custom)
-- Push notifications for session reminders

@@ -3,24 +3,29 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/auth_service.dart';
+import '../services/notification_service.dart';
 import '../services/session_service.dart';
+import '../services/theme_service.dart';
+import '../widgets/background_pattern.dart';
 import 'profile_screen.dart';
 import 'sessions_screen.dart';
+import 'stats_screen.dart';
 import 'tasks_screen.dart';
 
 // ---------------------------------------------------------------------------
-// Colour palette (mirrors main.dart FFColors)
+// Colour palette (delegates to ThemeService)
 // ---------------------------------------------------------------------------
 class _C {
-  static const bg = Color(0xFF000000);
-  static const surface = Color(0xFF1A1A1A);
-  static const border = Color(0xFFFFFFFF);
-  static const text = Color(0xFFFFFFFF);
-  static const subText = Color(0xFFAAAAAA);
-  static const accent = Color(0xFFD4A24C);
-  static const drawerBg = Color(0xFF111111);
-  static const navBg = Color(0xFF0D0D0D);
-  static const divider = Color(0xFF2A2A2A);
+  static Color get bg => ThemeService().currentTheme.bg;
+  static Color get surface => ThemeService().currentTheme.surface;
+  static Color get border => ThemeService().currentTheme.border;
+  static Color get text => ThemeService().currentTheme.text;
+  static Color get subText => ThemeService().currentTheme.subText;
+  static Color get accent => ThemeService().currentTheme.accent;
+  static Color get drawerBg => ThemeService().currentTheme.drawerBg;
+  static Color get navBg => ThemeService().currentTheme.navBg;
+  static Color get divider => ThemeService().currentTheme.divider;
+  static bool get isDark => ThemeService().currentTheme.isDark;
 }
 
 // ---------------------------------------------------------------------------
@@ -28,7 +33,7 @@ class _C {
 // ---------------------------------------------------------------------------
 enum TimerState { idle, running, paused }
 
-enum NavTab { home, stats, progress, sessions, tasks }
+enum NavTab { home, stats, sessions, tasks }
 
 // ---------------------------------------------------------------------------
 // HomeScreen
@@ -45,7 +50,6 @@ class _HomeScreenState extends State<HomeScreen> {
   final List<String> _subjects = [];
   String? _selectedSubject;
 
-  // Keys are scoped to the signed-in user so different accounts don't share subjects
   String get _kSubjectsKey =>
       'subjects_list_${AuthService().currentUser?.uid ?? 'guest'}';
   String get _kSelectedKey =>
@@ -55,6 +59,22 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadSubjects();
+    _loadReminderPrefs();
+    ThemeService().addListener(_onThemeChanged);
+  }
+
+  Future<void> _loadReminderPrefs() async {
+    final enabled = await ReminderPrefs.isEnabled();
+    final seconds = await ReminderPrefs.getSeconds();
+    if (!mounted) return;
+    setState(() {
+      _reminderEnabled = enabled;
+      _reminderSeconds = seconds;
+    });
+  }
+
+  void _onThemeChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadSubjects() async {
@@ -64,7 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     setState(() {
       _subjects
-        ..clear()       // always start clean — prevents duplicate on hot reload
+        ..clear()
         ..addAll(saved);
       _selectedSubject =
           (selected != null && saved.contains(selected)) ? selected : null;
@@ -83,16 +103,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ── timer ─────────────────────────────────────────────────────────────────
   static const List<_Preset> _presets = [
-    _Preset('15m',  15 * 60),
-    _Preset('25m',  25 * 60),
-    _Preset('40m',  40 * 60),
+    _Preset('15m', 15 * 60),
+    _Preset('25m', 25 * 60),
+    _Preset('40m', 40 * 60),
     _Preset('1 hr', 60 * 60),
   ];
 
-  int _selectedSeconds = 25 * 60; // currently chosen duration
-  int _remaining       = 25 * 60;
+  int _selectedSeconds = 25 * 60;
+  int _remaining = 25 * 60;
   TimerState _timerState = TimerState.idle;
   Timer? _timer;
+
+  // ── session reminder ──────────────────────────────────────────────────────
+  bool _reminderEnabled = false;
+  int _reminderSeconds = 60;
+  int? _reminderTimerId;
 
   // ── nav ───────────────────────────────────────────────────────────────────
   NavTab _currentTab = NavTab.home;
@@ -103,6 +128,13 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── timer helpers ─────────────────────────────────────────────────────────
   void _startTimer() {
     final int sessionStartSeconds = _remaining;
+
+    if (_reminderEnabled && _remaining > 0) {
+      final remindAt = _remaining - _reminderSeconds;
+      final delay = remindAt > 0 ? remindAt : 0;
+      _scheduleReminder(delay);
+    }
+
     setState(() => _timerState = TimerState.running);
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_remaining <= 0) {
@@ -115,7 +147,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  /// Called when the countdown reaches zero — saves session to Firestore.
   void _onSessionCompleted(int totalSeconds) {
     final uid = AuthService().currentUser?.uid;
     if (uid == null) return;
@@ -124,6 +155,26 @@ class _HomeScreenState extends State<HomeScreen> {
       subject: _selectedSubject,
       durationSeconds: totalSeconds,
     );
+    _cancelReminder();
+  }
+
+  Future<void> _scheduleReminder(int secondsFromNow) async {
+    _cancelReminder();
+    final id = DateTime.now().millisecondsSinceEpoch % 100000;
+    _reminderTimerId = id;
+    await NotificationService().scheduleSessionReminder(
+      id: id,
+      secondsFromNow: secondsFromNow,
+      title: 'Focus Flow Reminder',
+      body: 'Your focus session is about to finish — stay on track!',
+    );
+  }
+
+  Future<void> _cancelReminder() async {
+    if (_reminderTimerId != null) {
+      await NotificationService().cancelReminder(_reminderTimerId!);
+      _reminderTimerId = null;
+    }
   }
 
   void _pauseTimer() {
@@ -141,7 +192,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // ── preset / custom duration selection ────────────────────────────────────
   void _selectPreset(int seconds) {
     if (_timerState != TimerState.idle) return;
     setState(() {
@@ -152,19 +202,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _pickCustomTime() async {
     if (_timerState != TimerState.idle) return;
-
-    int hours   = _selectedSeconds ~/ 3600;
+    int hours = _selectedSeconds ~/ 3600;
     int minutes = (_selectedSeconds % 3600) ~/ 60;
-
     final result = await showDialog<int>(
       context: context,
-      builder: (ctx) => _CustomTimeDialog(initialHours: hours, initialMinutes: minutes),
+      builder: (ctx) => _CustomTimeDialog(
+        initialHours: hours,
+        initialMinutes: minutes,
+      ),
     );
-
     if (result != null && result > 0) {
       setState(() {
         _selectedSeconds = result;
-        _remaining       = result;
+        _remaining = result;
       });
     }
   }
@@ -182,23 +232,23 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: _C.surface,
-        title: const Text('Add Subject',
+        title: Text('Add Subject',
             style: TextStyle(color: _C.text, fontWeight: FontWeight.bold)),
         content: TextField(
           controller: controller,
           autofocus: true,
-          style: const TextStyle(color: _C.text),
+          style: TextStyle(color: _C.text),
           cursorColor: _C.accent,
           decoration: InputDecoration(
             hintText: 'e.g. Mathematics',
-            hintStyle: const TextStyle(color: _C.subText),
+            hintStyle: TextStyle(color: _C.subText),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: _C.divider),
+              borderSide: BorderSide(color: _C.divider),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: _C.accent),
+              borderSide: BorderSide(color: _C.accent),
             ),
           ),
           onSubmitted: (_) => _confirmAdd(controller),
@@ -206,14 +256,14 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child:
-                const Text('Cancel', style: TextStyle(color: _C.subText)),
+            child: Text('Cancel',
+                style: TextStyle(color: _C.subText)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: _C.accent),
             onPressed: () => _confirmAdd(controller),
-            child: const Text('Add',
-                style: TextStyle(color: Colors.black,
+            child: Text('Add',
+                style: TextStyle(color: _C.isDark ? Colors.white : Colors.black,
                     fontWeight: FontWeight.bold)),
           ),
         ],
@@ -235,6 +285,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final RenderBox box = btnCtx.findRenderObject() as RenderBox;
     final Offset offset = box.localToGlobal(Offset.zero);
 
+    final surface = _C.surface;
+    final accent = _C.accent;
+    final text = _C.text;
+    final subText = _C.subText;
+    final divider = _C.divider;
+
     final items = <PopupMenuEntry<String>>[
       ..._subjects.map(
         (s) => PopupMenuItem<String>(
@@ -243,56 +299,54 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Icon(Icons.circle,
                   size: 8,
-                  color: _selectedSubject == s ? _C.accent : _C.subText),
+                  color: _selectedSubject == s ? accent : subText),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(s,
                     style: TextStyle(
-                        color: _selectedSubject == s ? _C.accent : _C.text)),
+                        color: _selectedSubject == s ? accent : text)),
               ),
-              // Delete button — tap without closing the parent menu
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () {
-                  Navigator.pop(context); // close menu
+                  Navigator.pop(context);
                   setState(() {
                     _subjects.remove(s);
                     if (_selectedSubject == s) _selectedSubject = null;
                   });
                   _saveSubjects();
                 },
-                child: const Padding(
-                  padding: EdgeInsets.only(left: 8),
-                  child: Icon(Icons.close, size: 14, color: Color(0xFF666666)),
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Icon(Icons.close, size: 14, color: subText),
                 ),
               ),
             ],
           ),
         ),
       ),
-      if (_subjects.isNotEmpty) const PopupMenuDivider(),
-      const PopupMenuItem<String>(
+      if (_subjects.isNotEmpty) PopupMenuDivider(height: 1, color: divider),
+      PopupMenuItem<String>(
         value: '__add__',
         child: Row(
           children: [
-            Icon(Icons.add, size: 16, color: _C.accent),
-            SizedBox(width: 8),
-            Text('Add subject', style: TextStyle(color: _C.accent)),
+            Icon(Icons.add, size: 16, color: accent),
+            const SizedBox(width: 8),
+            Text('Add subject', style: TextStyle(color: accent)),
           ],
         ),
       ),
     ];
 
-    // If no subjects yet, only show Add subject
     final menuItems = _subjects.isEmpty
         ? [
-            const PopupMenuItem<String>(
+            PopupMenuItem<String>(
               value: '__add__',
               child: Row(
                 children: [
-                  Icon(Icons.add, size: 16, color: _C.accent),
-                  SizedBox(width: 8),
-                  Text('Add subject', style: TextStyle(color: _C.accent)),
+                  Icon(Icons.add, size: 16, color: accent),
+                  const SizedBox(width: 8),
+                  Text('Add subject', style: TextStyle(color: accent)),
                 ],
               ),
             ),
@@ -307,7 +361,7 @@ class _HomeScreenState extends State<HomeScreen> {
         offset.dx + box.size.width,
         0,
       ),
-      color: _C.surface,
+      color: surface,
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12)),
       items: menuItems,
@@ -323,6 +377,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    ThemeService().removeListener(_onThemeChanged);
     _timer?.cancel();
     super.dispose();
   }
@@ -330,15 +385,15 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    final patternColor = _C.accent.withAlpha(15);
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: _C.bg,
-      // ── App bar ────────────────────────────────────────────────────────
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
-        title: const Text(
+        title: Text(
           'Focus Flow',
           style: TextStyle(
             color: _C.text,
@@ -348,17 +403,23 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         leading: IconButton(
-          icon: const Icon(Icons.menu, color: _C.text),
+          icon: Icon(Icons.menu, color: _C.text),
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
       ),
-      // ── Drawer ─────────────────────────────────────────────────────────
       drawer: _buildDrawer(),
-      // ── Body ───────────────────────────────────────────────────────────
-      body: _currentTab == NavTab.home
-          ? _buildHomeBody()
-          : _buildPlaceholder(_currentTab),
-      // ── Bottom Nav ─────────────────────────────────────────────────────
+      body: Stack(
+        children: [
+          BackgroundPattern(
+            color: patternColor,
+            spacing: 48.0,
+            dotRadius: 1.2,
+          ),
+          _currentTab == NavTab.home
+              ? _buildHomeBody()
+              : _buildPlaceholder(_currentTab),
+        ],
+      ),
       bottomNavigationBar: _buildBottomNav(),
     );
   }
@@ -368,12 +429,10 @@ class _HomeScreenState extends State<HomeScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Subject selector + Duration picker on the same row
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
           child: Row(
             children: [
-              // Subject selector — warm gold pill
               Builder(
                 builder: (btnCtx) => GestureDetector(
                   onTap: () => _showSubjectMenu(btnCtx),
@@ -383,13 +442,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         horizontal: 16, vertical: 10),
                     decoration: BoxDecoration(
                       color: _selectedSubject != null
-                          ? const Color(0xFFD4A24C).withValues(alpha: 0.15)
-                          : const Color(0xFF1E1E1E),
+                          ? _C.accent.withAlpha(38)
+                          : _C.surface,
                       borderRadius: BorderRadius.circular(30),
                       border: Border.all(
                         color: _selectedSubject != null
-                            ? const Color(0xFFD4A24C).withValues(alpha: 0.6)
-                            : const Color(0xFF333333),
+                            ? _C.accent.withAlpha(153)
+                            : _C.border,
                         width: 1.5,
                       ),
                     ),
@@ -402,16 +461,16 @@ class _HomeScreenState extends State<HomeScreen> {
                               : Icons.add_circle_outline,
                           size: 14,
                           color: _selectedSubject != null
-                              ? const Color(0xFFD4A24C)
-                              : const Color(0xFF888888),
+                              ? _C.accent
+                              : _C.subText,
                         ),
                         const SizedBox(width: 7),
                         Text(
                           _selectedSubject ?? 'Subject',
                           style: TextStyle(
                             color: _selectedSubject != null
-                                ? const Color(0xFFD4A24C)
-                                : const Color(0xFF888888),
+                                ? _C.accent
+                                : _C.subText,
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
                             letterSpacing: 0.3,
@@ -422,18 +481,15 @@ class _HomeScreenState extends State<HomeScreen> {
                           Icons.keyboard_arrow_down_rounded,
                           size: 16,
                           color: _selectedSubject != null
-                              ? const Color(0xFFD4A24C)
-                              : const Color(0xFF666666),
+                              ? _C.accent
+                              : _C.subText,
                         ),
                       ],
                     ),
                   ),
                 ),
               ),
-
               const Spacer(),
-
-              // Duration pill — slate/blue tint
               Builder(
                 builder: (btnCtx) => GestureDetector(
                   onTap: _timerState == TimerState.idle
@@ -445,13 +501,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         horizontal: 16, vertical: 10),
                     decoration: BoxDecoration(
                       color: _timerState == TimerState.idle
-                          ? const Color(0xFF8B93A6).withValues(alpha: 0.15)
-                          : const Color(0xFF1A1A1A),
+                          ? _C.accent.withAlpha(38)
+                          : _C.surface,
                       borderRadius: BorderRadius.circular(30),
                       border: Border.all(
                         color: _timerState == TimerState.idle
-                            ? const Color(0xFF8B93A6).withValues(alpha: 0.5)
-                            : const Color(0xFF2A2A2A),
+                            ? _C.accent.withAlpha(128)
+                            : _C.border,
                         width: 1.5,
                       ),
                     ),
@@ -462,16 +518,16 @@ class _HomeScreenState extends State<HomeScreen> {
                           Icons.hourglass_bottom_rounded,
                           size: 13,
                           color: _timerState == TimerState.idle
-                              ? const Color(0xFF8B93A6)
-                              : const Color(0xFF555555),
+                              ? _C.accent
+                              : _C.subText,
                         ),
                         const SizedBox(width: 7),
                         Text(
                           _durationLabel(_selectedSeconds),
                           style: TextStyle(
                             color: _timerState == TimerState.idle
-                                ? const Color(0xFFB0B8CC)
-                                : const Color(0xFF555555),
+                                ? _C.text
+                                : _C.subText,
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
                             letterSpacing: 0.3,
@@ -482,8 +538,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           Icons.keyboard_arrow_down_rounded,
                           size: 16,
                           color: _timerState == TimerState.idle
-                              ? const Color(0xFF8B93A6)
-                              : const Color(0xFF444444),
+                              ? _C.accent
+                              : _C.subText,
                         ),
                       ],
                     ),
@@ -493,15 +549,12 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
-
-        // Timer area – sits in upper-centre of the remaining space
         Expanded(
           child: Align(
             alignment: const Alignment(0, -0.35),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Circular timer
                 SizedBox(
                   width: 260,
                   height: 260,
@@ -519,7 +572,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Center(
                       child: Text(
                         _timeLabel,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: _C.text,
                           fontSize: 58,
                           fontWeight: FontWeight.w800,
@@ -530,10 +583,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 ),
-
                 const SizedBox(height: 28),
-
-                // Buttons
+                _buildReminderRow(),
+                const SizedBox(height: 12),
                 _buildTimerButtons(),
               ],
             ),
@@ -543,11 +595,15 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── Preset chips row ──────────────────────────────────────────────────────
   // ── Duration dropdown menu ────────────────────────────────────────────────
   void _showDurationMenu(BuildContext btnCtx) async {
     final RenderBox box = btnCtx.findRenderObject() as RenderBox;
     final Offset offset = box.localToGlobal(Offset.zero);
+    final surface = _C.surface;
+    final accent = _C.accent;
+    final text = _C.text;
+    final subText = _C.subText;
+    final divider = _C.divider;
 
     final menuItems = <PopupMenuEntry<int>>[
       ..._presets.map((p) => PopupMenuItem<int>(
@@ -557,15 +613,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 Icon(Icons.timer_outlined,
                     size: 15,
                     color: _selectedSeconds == p.seconds
-                        ? _C.accent
-                        : _C.subText),
+                        ? accent
+                        : subText),
                 const SizedBox(width: 10),
                 Text(
                   p.label,
                   style: TextStyle(
                     color: _selectedSeconds == p.seconds
-                        ? _C.accent
-                        : _C.text,
+                        ? accent
+                        : text,
                     fontWeight: _selectedSeconds == p.seconds
                         ? FontWeight.w600
                         : FontWeight.normal,
@@ -574,19 +630,19 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           )),
-      const PopupMenuDivider(),
+      PopupMenuDivider(height: 1, color: divider),
       PopupMenuItem<int>(
-        value: -1, // sentinel for custom
+        value: -1,
         child: Row(
           children: [
-            const Icon(Icons.tune, size: 15, color: _C.accent),
+            Icon(Icons.tune, size: 15, color: accent),
             const SizedBox(width: 10),
             Text(
               'Custom',
               style: TextStyle(
                 color: !_presets.any((p) => p.seconds == _selectedSeconds)
-                    ? _C.accent
-                    : _C.text,
+                    ? accent
+                    : text,
               ),
             ),
           ],
@@ -602,7 +658,7 @@ class _HomeScreenState extends State<HomeScreen> {
         offset.dx + box.size.width,
         0,
       ),
-      color: _C.surface,
+      color: surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       items: menuItems,
     );
@@ -615,7 +671,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Short label shown on the dropdown button e.g. "25 min", "1 hr", "48 min"
   String _durationLabel(int seconds) {
     final m = seconds ~/ 60;
     if (m < 60) return '$m min';
@@ -627,13 +682,8 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── Timer buttons ─────────────────────────────────────────────────────────
   Widget _buildTimerButtons() {
     if (_timerState == TimerState.idle) {
-      return _pill(
-        label: 'Start',
-        onTap: _startTimer,
-        filled: false,
-      );
+      return _pill(label: 'Start', onTap: _startTimer, filled: false);
     }
-
     if (_timerState == TimerState.running) {
       return Row(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -644,8 +694,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       );
     }
-
-    // paused
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -664,8 +712,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 22, vertical: 9),
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 9),
         decoration: BoxDecoration(
           color: Colors.transparent,
           borderRadius: BorderRadius.circular(50),
@@ -673,7 +720,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         child: Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             color: _C.text,
             fontSize: 16,
             fontWeight: FontWeight.w400,
@@ -684,10 +731,115 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ── Reminder toggle row ───────────────────────────────────────────────────
+  Widget _buildReminderRow() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Reminder',
+              style: TextStyle(
+                color: _C.text,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Switch(
+              value: _reminderEnabled,
+              onChanged: _timerState == TimerState.idle
+                  ? (val) async {
+                      await ReminderPrefs.setEnabled(val);
+                      setState(() => _reminderEnabled = val);
+                    }
+                  : null,
+              activeThumbColor: _C.accent,
+            ),
+          ],
+        ),
+        const SizedBox(width: 16),
+        if (_reminderEnabled)
+          GestureDetector(
+            onTap: _timerState == TimerState.idle ? _pickReminderTime : null,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 14, vertical: 9),
+              decoration: BoxDecoration(
+                color: _timerState == TimerState.idle
+                    ? _C.accent.withAlpha(38)
+                    : _C.surface,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: _timerState == TimerState.idle
+                      ? _C.accent.withAlpha(128)
+                      : _C.border,
+                  width: 1.5,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.notifications_outlined,
+                    size: 13,
+                    color: _timerState == TimerState.idle
+                        ? _C.accent
+                        : _C.subText,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _reminderLabel(_reminderSeconds),
+                    style: TextStyle(
+                      color: _timerState == TimerState.idle
+                          ? _C.text
+                          : _C.subText,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    size: 16,
+                    color: _timerState == TimerState.idle
+                        ? _C.accent
+                        : _C.subText,
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  String _reminderLabel(int seconds) {
+    final m = seconds ~/ 60;
+    final s = seconds % 60;
+    if (m > 0) return '$m min${s > 0 ? ' $s sec' : ''}';
+    return '$s sec';
+  }
+
+  Future<void> _pickReminderTime() async {
+    final current = _reminderSeconds;
+    final result = await showDialog<int>(
+      context: context,
+      builder: (ctx) => _ReminderTimeDialog(initialSeconds: current),
+    );
+    if (result != null && result > 0) {
+      await ReminderPrefs.setSeconds(result);
+      setState(() => _reminderSeconds = result);
+    }
+  }
+
   // ── Bottom navigation ─────────────────────────────────────────────────────
   Widget _buildBottomNav() {
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: _C.navBg,
         border: Border(top: BorderSide(color: _C.divider, width: 0.5)),
       ),
@@ -702,8 +854,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   'Timer'),
               _navIcon(NavTab.stats, Icons.bar_chart_outlined,
                   Icons.bar_chart, 'Stats'),
-              _navIcon(NavTab.progress, Icons.trending_up_outlined,
-                  Icons.trending_up, 'Progress'),
               _navIcon(NavTab.sessions, Icons.history_outlined,
                   Icons.history, 'Sessions'),
               _navIcon(
@@ -750,36 +900,13 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── Placeholder for non-home tabs ─────────────────────────────────────────
   Widget _buildPlaceholder(NavTab tab) {
     final uid = AuthService().currentUser?.uid ?? '';
-
     if (tab == NavTab.sessions) return SessionsScreen(uid: uid);
-    if (tab == NavTab.tasks)    return TasksScreen(uid: uid, initialSubjects: List<String>.from(_subjects));
-
-    final labels = {
-      NavTab.stats:    ('Weekly Study Stats',  Icons.bar_chart),
-      NavTab.progress: ('Progress Dashboard',  Icons.trending_up),
-    };
-    final info = labels[tab]!;
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(info.$2, size: 64, color: _C.subText),
-          const SizedBox(height: 16),
-          Text(
-            info.$1,
-            style: const TextStyle(
-                color: _C.subText,
-                fontSize: 20,
-                fontWeight: FontWeight.w500),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Coming soon',
-            style: TextStyle(color: _C.divider, fontSize: 13),
-          ),
-        ],
-      ),
-    );
+    if (tab == NavTab.tasks) {
+      return TasksScreen(uid: uid,
+          initialSubjects: List<String>.from(_subjects));
+    }
+    if (tab == NavTab.stats) return StatsScreen(uid: uid);
+    return const SizedBox();
   }
 
   // ── Drawer ────────────────────────────────────────────────────────────────
@@ -790,7 +917,6 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 8),
               child: Column(
@@ -799,31 +925,29 @@ class _HomeScreenState extends State<HomeScreen> {
                   CircleAvatar(
                     radius: 32,
                     backgroundColor: _C.surface,
-                    child: const Icon(Icons.person,
+                    child: Icon(Icons.person,
                         size: 36, color: _C.subText),
                   ),
                   const SizedBox(height: 12),
                   Text(
                     AuthService().currentUser?.displayName ?? 'Focus Flow',
-                    style: const TextStyle(
+                    style: TextStyle(
                         color: _C.text,
                         fontSize: 18,
                         fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    AuthService().currentUser?.email ?? 'Stay focused, stay ahead',
-                    style: const TextStyle(color: _C.subText, fontSize: 12),
+                    AuthService().currentUser?.email ??
+                        'Stay focused, stay ahead',
+                    style: TextStyle(color: _C.subText, fontSize: 12),
                   ),
                 ],
               ),
             ),
-
             Divider(color: _C.divider, thickness: 0.5,
                 indent: 20, endIndent: 20),
             const SizedBox(height: 8),
-
-            // Menu items
             _drawerItem(
               icon: Icons.person_outline,
               label: 'Profile',
@@ -841,32 +965,20 @@ class _HomeScreenState extends State<HomeScreen> {
               label: 'App Theme',
               onTap: () {
                 Navigator.pop(context);
-                _showSnack('Theme settings – coming soon');
+                _showThemeSheet(context);
               },
             ),
-            _drawerItem(
-              icon: Icons.settings_outlined,
-              label: 'Settings',
-              onTap: () {
-                Navigator.pop(context);
-                _showSnack('Settings – coming soon');
-              },
-            ),
-
             const Spacer(),
-
             Divider(color: _C.divider, thickness: 0.5,
                 indent: 20, endIndent: 20),
-
             _drawerItem(
               icon: Icons.logout,
               label: 'Logout',
               iconColor: Colors.redAccent,
               labelColor: Colors.redAccent,
               onTap: () async {
-                Navigator.pop(context); // close drawer first
+                Navigator.pop(context);
                 await AuthService().logout();
-                // AuthGate's StreamBuilder handles the redirect to LoginScreen
               },
             ),
             const SizedBox(height: 16),
@@ -880,14 +992,14 @@ class _HomeScreenState extends State<HomeScreen> {
     required IconData icon,
     required String label,
     required VoidCallback onTap,
-    Color iconColor = _C.subText,
-    Color labelColor = _C.text,
+    Color? iconColor,
+    Color? labelColor,
   }) {
     return ListTile(
-      leading: Icon(icon, color: iconColor, size: 22),
+      leading: Icon(icon, color: iconColor ?? _C.subText, size: 22),
       title: Text(label,
           style: TextStyle(
-              color: labelColor,
+              color: labelColor ?? _C.text,
               fontSize: 15,
               fontWeight: FontWeight.w500)),
       horizontalTitleGap: 8,
@@ -896,9 +1008,175 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showSnack(String msg) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(msg)));
+  void _showThemeSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: _C.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            final current = ThemeService().currentTheme;
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: _C.subText.withAlpha(77),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Icon(Icons.palette_outlined, color: _C.accent, size: 22),
+                        const SizedBox(width: 10),
+                        Text(
+                          'App Theme',
+                          style: TextStyle(
+                            color: _C.text,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          icon: Icon(Icons.close, color: _C.subText, size: 20),
+                          onPressed: () => Navigator.pop(ctx),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Choose a theme that fits your focus flow',
+                      style: TextStyle(color: _C.subText, fontSize: 13),
+                    ),
+                    const SizedBox(height: 18),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ...ThemeService().availableThemes.map((theme) {
+                              final isSelected = theme.id == current.id;
+                              final themeTextColor =
+                                  theme.isDark ? Colors.white : Colors.black;
+                              final themeSubTextColor =
+                                  theme.isDark ? Colors.white70 : Colors.black54;
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: InkWell(
+                                  onTap: () {
+                                    ThemeService().setTheme(theme);
+                                    setSheetState(() {});
+                                  },
+                                  borderRadius: BorderRadius.circular(14),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 14, vertical: 12),
+                                    decoration: BoxDecoration(
+                                      color: isSelected
+                                          ? theme.accent.withAlpha(31)
+                                          : theme.bg,
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(
+                                        color: isSelected
+                                            ? theme.accent
+                                            : theme.border,
+                                        width: isSelected ? 1.5 : 1.0,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 32,
+                                          height: 32,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: theme.bg,
+                                            border: Border.all(
+                                                color: theme.border,
+                                                width: 1.5),
+                                          ),
+                                          child: Center(
+                                            child: Container(
+                                              width: 14,
+                                              height: 14,
+                                              decoration: BoxDecoration(
+                                                shape: BoxShape.circle,
+                                                color: theme.accent,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 14),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                theme.name,
+                                                style: TextStyle(
+                                                  color: isSelected
+                                                      ? theme.accent
+                                                      : themeTextColor,
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                theme.description,
+                                                style: TextStyle(
+                                                  color: isSelected
+                                                      ? theme
+                                                          .accent
+                                                          .withAlpha(200)
+                                                      : themeSubTextColor,
+                                                  fontSize: 11,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        if (isSelected)
+                                          Icon(Icons.check_circle_rounded,
+                                              color: theme.accent, size: 20)
+                                        else
+                                          Icon(Icons.circle_outlined,
+                                              color: themeSubTextColor
+                                                  .withAlpha(120),
+                                              size: 20),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 }
 
@@ -933,19 +1211,20 @@ class _CustomTimeDialogState extends State<_CustomTimeDialog> {
   @override
   void initState() {
     super.initState();
-    _hours   = widget.initialHours;
+    _hours = widget.initialHours;
     _minutes = widget.initialMinutes;
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = _C.isDark;
     return AlertDialog(
-      backgroundColor: const Color(0xFF1A1A1A),
+      backgroundColor: _C.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Text(
+      title: Text(
         'Custom Duration',
         style: TextStyle(
-            color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17),
+            color: _C.text, fontWeight: FontWeight.bold, fontSize: 17),
       ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -954,7 +1233,6 @@ class _CustomTimeDialogState extends State<_CustomTimeDialog> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Hours
               _SpinnerColumn(
                 label: 'Hours',
                 value: _hours,
@@ -962,17 +1240,16 @@ class _CustomTimeDialogState extends State<_CustomTimeDialog> {
                 max: 5,
                 onChanged: (v) => setState(() => _hours = v),
               ),
-              const Padding(
-                padding: EdgeInsets.only(bottom: 24),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 24),
                 child: Text(
                   ' : ',
                   style: TextStyle(
-                      color: Colors.white,
+                      color: _C.text,
                       fontSize: 28,
                       fontWeight: FontWeight.w300),
                 ),
               ),
-              // Minutes
               _SpinnerColumn(
                 label: 'Minutes',
                 value: _minutes,
@@ -983,12 +1260,11 @@ class _CustomTimeDialogState extends State<_CustomTimeDialog> {
             ],
           ),
           if (_hours == 0 && _minutes == 0)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
               child: Text(
                 'Set at least 1 minute',
-                style:
-                    TextStyle(color: Colors.redAccent, fontSize: 11),
+                style: TextStyle(color: Colors.redAccent, fontSize: 11),
               ),
             ),
         ],
@@ -996,12 +1272,12 @@ class _CustomTimeDialogState extends State<_CustomTimeDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel',
-              style: TextStyle(color: Color(0xFFAAAAAA))),
+          child: Text('Cancel',
+              style: TextStyle(color: _C.subText)),
         ),
         ElevatedButton(
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFD4A24C),
+            backgroundColor: _C.accent,
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8)),
             elevation: 0,
@@ -1010,9 +1286,134 @@ class _CustomTimeDialogState extends State<_CustomTimeDialog> {
               ? null
               : () => Navigator.pop(
                   context, _hours * 3600 + _minutes * 60),
-          child: const Text('Set',
+          child: Text('Set',
               style: TextStyle(
-                  color: Colors.black, fontWeight: FontWeight.bold)),
+                  color: isDark ? Colors.white : Colors.black,
+                  fontWeight: FontWeight.bold)),
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reminder time picker dialog
+// ---------------------------------------------------------------------------
+class _ReminderTimeDialog extends StatefulWidget {
+  final int initialSeconds;
+  const _ReminderTimeDialog({required this.initialSeconds});
+
+  @override
+  State<_ReminderTimeDialog> createState() => _ReminderTimeDialogState();
+}
+
+class _ReminderTimeDialogState extends State<_ReminderTimeDialog> {
+  late int _seconds;
+
+  @override
+  void initState() {
+    super.initState();
+    _seconds = widget.initialSeconds;
+  }
+
+  void _adjust(int delta) {
+    setState(() {
+      _seconds = (_seconds + delta).clamp(10, 3600);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = _seconds ~/ 60;
+    final s = _seconds % 60;
+    return AlertDialog(
+      backgroundColor: _C.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text(
+        'Reminder Time',
+        style: TextStyle(
+            color: _C.text, fontWeight: FontWeight.bold, fontSize: 17),
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Notify ${m > 0 ? '$m min' : ''}${s > 0 ? ' $s sec' : ''} before the session ends',
+            style: TextStyle(color: _C.subText, fontSize: 13),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _reminderSpinner('-', 10),
+              const SizedBox(width: 12),
+              Text(
+                '${_seconds.toString().padLeft(2, '0')}s',
+                style: TextStyle(
+                  color: _C.text,
+                  fontSize: 32,
+                  fontWeight: FontWeight.w300,
+                ),
+              ),
+              const SizedBox(width: 12),
+              _reminderSpinner('+', 10),
+            ],
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text('Cancel',
+              style: TextStyle(color: _C.subText)),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _C.accent,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8)),
+            elevation: 0,
+          ),
+          onPressed: () => Navigator.pop(context, _seconds),
+          child: Text('Set',
+              style: TextStyle(
+                  color: _C.isDark ? Colors.white : Colors.black,
+                  fontWeight: FontWeight.bold)),
+        ),
+      ],
+    );
+  }
+
+  Widget _reminderSpinner(String label, int delta) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          onPressed: () => _adjust(delta),
+          icon: Icon(
+            label == '+'
+                ? Icons.keyboard_arrow_up
+                : Icons.keyboard_arrow_down,
+            color: _C.accent,
+          ),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+        ),
+        Text(
+          label,
+          style: TextStyle(color: _C.subText, fontSize: 18),
+        ),
+        IconButton(
+          onPressed: () => _adjust(-delta),
+          icon: Icon(
+            label == '+'
+                ? Icons.keyboard_arrow_down
+                : Icons.keyboard_arrow_up,
+            color: _C.accent,
+          ),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
         ),
       ],
     );
@@ -1044,13 +1445,13 @@ class _SpinnerColumn extends StatelessWidget {
       children: [
         IconButton(
           onPressed: value < max ? () => onChanged(value + 1) : null,
-          icon: const Icon(Icons.keyboard_arrow_up, color: Color(0xFFD4A24C)),
+          icon: Icon(Icons.keyboard_arrow_up, color: _C.accent),
           padding: EdgeInsets.zero,
         ),
         Text(
           value.toString().padLeft(2, '0'),
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: _C.text,
             fontSize: 36,
             fontWeight: FontWeight.w300,
             letterSpacing: 2,
@@ -1058,15 +1459,13 @@ class _SpinnerColumn extends StatelessWidget {
         ),
         IconButton(
           onPressed: value > min ? () => onChanged(value - 1) : null,
-          icon: const Icon(Icons.keyboard_arrow_down,
-              color: Color(0xFFD4A24C)),
+          icon: Icon(Icons.keyboard_arrow_down, color: _C.accent),
           padding: EdgeInsets.zero,
         ),
         const SizedBox(height: 4),
         Text(
           label,
-          style: const TextStyle(
-              color: Color(0xFF666666), fontSize: 11),
+          style: TextStyle(color: _C.subText, fontSize: 11),
         ),
       ],
     );
@@ -1077,7 +1476,7 @@ class _SpinnerColumn extends StatelessWidget {
 // Timer ring painter
 // ---------------------------------------------------------------------------
 class _TimerRingPainter extends CustomPainter {
-  final double progress;   // 1.0 = full, 0.0 = empty
+  final double progress;
   final Color trackColor;
   final Color arcColor;
   final double strokeWidth;
@@ -1095,7 +1494,6 @@ class _TimerRingPainter extends CustomPainter {
     final radius = (size.shortestSide / 2) - strokeWidth / 2;
     final rect = Rect.fromCircle(center: center, radius: radius);
 
-    // Track ring (full dim circle)
     final trackPaint = Paint()
       ..color = trackColor
       ..style = PaintingStyle.stroke
@@ -1103,9 +1501,7 @@ class _TimerRingPainter extends CustomPainter {
       ..strokeCap = StrokeCap.butt;
     canvas.drawCircle(center, radius, trackPaint);
 
-    // Progress arc — starts at top (–π/2), sweeps clockwise
     final sweepAngle = 2 * math.pi * progress;
-
     final arcPaint = Paint()
       ..color = arcColor
       ..style = PaintingStyle.stroke
@@ -1114,19 +1510,17 @@ class _TimerRingPainter extends CustomPainter {
 
     canvas.drawArc(
       rect,
-      -math.pi / 2,       // start at 12 o'clock
-      sweepAngle,         // sweep proportional to remaining time
+      -math.pi / 2,
+      sweepAngle,
       false,
       arcPaint,
     );
 
-    // Dot at the shrinking tip (end of the arc)
     if (progress > 0) {
       final tipAngle = -math.pi / 2 + sweepAngle;
       final tipX = center.dx + radius * math.cos(tipAngle);
       final tipY = center.dy + radius * math.sin(tipAngle);
 
-      // Slightly larger white filled circle
       final dotPaint = Paint()
         ..color = const Color(0xFFFFFFFF)
         ..style = PaintingStyle.fill;
@@ -1140,5 +1534,3 @@ class _TimerRingPainter extends CustomPainter {
       old.arcColor != arcColor ||
       old.trackColor != trackColor;
 }
-
-

@@ -1,6 +1,8 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'firebase_options.dart';
+import 'services/notification_service.dart';
+import 'services/theme_service.dart';
 import 'widgets/auth_gate.dart';
 
 void main() async {
@@ -8,6 +10,8 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  await ThemeService().init();
+  await NotificationService().init();
   runApp(const FocusFlowApp());
 }
 
@@ -16,19 +20,17 @@ class FocusFlowApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'FocusFlow',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        scaffoldBackgroundColor: FFColors.ink,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: FFColors.brass,
-          brightness: Brightness.dark,
-          surface: FFColors.surface,
-        ),
-      ),
-      home: const AuthGate(),
+    return ListenableBuilder(
+      listenable: ThemeService(),
+      builder: (context, _) {
+        final current = ThemeService().currentTheme;
+        return MaterialApp(
+          title: 'FocusFlow',
+          debugShowCheckedModeBanner: false,
+          theme: current.toThemeData(),
+          home: const AuthGate(),
+        );
+      },
     );
   }
 }

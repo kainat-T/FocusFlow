@@ -1,6 +1,16 @@
 import 'package:flutter/material.dart';
 import '../models/session_model.dart';
 import '../services/session_service.dart';
+import '../services/theme_service.dart';
+
+class _C {
+  static Color get surface => ThemeService().currentTheme.surface;
+  static Color get border  => ThemeService().currentTheme.border;
+  static Color get text    => ThemeService().currentTheme.text;
+  static Color get subText => ThemeService().currentTheme.subText;
+  static Color get accent  => ThemeService().currentTheme.accent;
+  static Color get drawerBg=> ThemeService().currentTheme.drawerBg;
+}
 
 class SessionsScreen extends StatelessWidget {
   final String uid;
@@ -12,9 +22,9 @@ class SessionsScreen extends StatelessWidget {
       stream: SessionService().sessionsStream(uid),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
+          return Center(
             child: CircularProgressIndicator(
-              color: Color(0xFFD4A24C),
+              color: _C.accent,
               strokeWidth: 2,
             ),
           );
@@ -68,25 +78,25 @@ class SessionsScreen extends StatelessWidget {
             height: 80,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: const Color(0xFF1A1A1A),
-              border: Border.all(color: const Color(0xFF2A2A2A)),
+              color: _C.surface,
+              border: Border.all(color: _C.border),
             ),
-            child: const Icon(Icons.history,
-                size: 36, color: Color(0xFF444444)),
+            child: Icon(Icons.history,
+                size: 36, color: _C.subText.withValues(alpha: 0.5)),
           ),
           const SizedBox(height: 20),
-          const Text(
+          Text(
             'No sessions yet',
             style: TextStyle(
-              color: Color(0xFFAAAAAA),
+              color: _C.text,
               fontSize: 18,
               fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'Complete a focus session to see it here',
-            style: TextStyle(color: Color(0xFF555555), fontSize: 13),
+            style: TextStyle(color: _C.subText, fontSize: 13),
           ),
         ],
       ),
@@ -159,9 +169,9 @@ class _SessionCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
+        color: _C.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF2A2A2A)),
+        border: Border.all(color: _C.border),
       ),
       child: Row(
         children: [
@@ -171,19 +181,17 @@ class _SessionCard extends StatelessWidget {
             height: 42,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: const Color(0xFF111111),
+              color: _C.drawerBg,
               border: Border.all(
                 color: hasSubject
-                    ? const Color(0xFFD4A24C).withValues(alpha: 0.4)
-                    : const Color(0xFF2A2A2A),
+                    ? _C.accent.withValues(alpha: 0.4)
+                    : _C.border,
               ),
             ),
             child: Icon(
               hasSubject ? Icons.book_outlined : Icons.timer_outlined,
               size: 18,
-              color: hasSubject
-                  ? const Color(0xFFD4A24C)
-                  : const Color(0xFF666666),
+              color: hasSubject ? _C.accent : _C.subText,
             ),
           ),
 
@@ -196,8 +204,8 @@ class _SessionCard extends StatelessWidget {
               children: [
                 Text(
                   hasSubject ? session.subject! : 'Focus Session',
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _C.text,
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
                   ),
@@ -205,8 +213,8 @@ class _SessionCard extends StatelessWidget {
                 const SizedBox(height: 3),
                 Text(
                   time,
-                  style: const TextStyle(
-                      color: Color(0xFF666666), fontSize: 11),
+                  style: TextStyle(
+                      color: _C.subText, fontSize: 11),
                 ),
               ],
             ),
@@ -216,14 +224,14 @@ class _SessionCard extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              color: const Color(0xFF111111),
+              color: _C.drawerBg,
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: const Color(0xFF2A2A2A)),
+              border: Border.all(color: _C.border),
             ),
             child: Text(
               session.durationLabel,
-              style: const TextStyle(
-                color: Color(0xFFD4A24C),
+              style: TextStyle(
+                color: _C.accent,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),

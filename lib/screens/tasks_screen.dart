@@ -3,15 +3,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/task_model.dart';
 import '../services/auth_service.dart';
 import '../services/task_service.dart';
+import '../services/theme_service.dart';
 
-// ── Colour constants (mirrors _C in home_screen) ───────────────────────────
+// ── Colour constants (delegates to ThemeService) ───────────────────────────
 class _C {
-  static const bg      = Color(0xFF000000);
-  static const surface = Color(0xFF1A1A1A);
-  static const text    = Color(0xFFFFFFFF);
-  static const subText = Color(0xFFAAAAAA);
-  static const accent  = Color(0xFFD4A24C);
-  static const divider = Color(0xFF2A2A2A);
+  static Color get bg      => ThemeService().currentTheme.bg;
+  static Color get surface => ThemeService().currentTheme.surface;
+  static Color get border  => ThemeService().currentTheme.border;
+  static Color get text    => ThemeService().currentTheme.text;
+  static Color get subText => ThemeService().currentTheme.subText;
+  static Color get accent  => ThemeService().currentTheme.accent;
+  static Color get divider => ThemeService().currentTheme.divider;
+  static bool get isDark   => ThemeService().currentTheme.isDark;
 }
 
 // ── Priority helpers ───────────────────────────────────────────────────────
@@ -175,16 +178,16 @@ class _TasksScreenState extends State<TasksScreen>
       builder: (ctx) => AlertDialog(
         backgroundColor: _C.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Delete Task',
+        title: Text('Delete Task',
             style: TextStyle(color: _C.text, fontWeight: FontWeight.bold)),
         content: Text(
           '"${task.title}" will be permanently deleted.',
-          style: const TextStyle(color: _C.subText, fontSize: 13),
+          style: TextStyle(color: _C.subText, fontSize: 13),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel',
+            child: Text('Cancel',
                 style: TextStyle(color: _C.subText)),
           ),
           ElevatedButton(
@@ -195,7 +198,7 @@ class _TasksScreenState extends State<TasksScreen>
                   borderRadius: BorderRadius.circular(8)),
             ),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete',
+            child: Text('Delete',
                 style: TextStyle(
                     color: Colors.white, fontWeight: FontWeight.bold)),
           ),
@@ -221,7 +224,7 @@ class _TasksScreenState extends State<TasksScreen>
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
             child: Row(
               children: [
-                const Text(
+                Text(
                   'Tasks',
                   style: TextStyle(
                     color: _C.text,
@@ -240,13 +243,13 @@ class _TasksScreenState extends State<TasksScreen>
                           horizontal: 12, vertical: 7),
                       decoration: BoxDecoration(
                         color: _filterSubject != null
-                            ? _C.accent.withValues(alpha: 0.15)
-                            : const Color(0xFF1E1E1E),
+                            ? _C.accent.withAlpha(38)
+                            : _C.surface,
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
                           color: _filterSubject != null
-                              ? _C.accent.withValues(alpha: 0.6)
-                              : _C.divider,
+                              ? _C.accent.withAlpha(153)
+                              : _C.border,
                           width: 1.5,
                         ),
                       ),
@@ -274,7 +277,7 @@ class _TasksScreenState extends State<TasksScreen>
                             GestureDetector(
                               onTap: () =>
                                   setState(() => _filterSubject = null),
-                              child: const Icon(Icons.close,
+                              child: Icon(Icons.close,
                                   size: 12, color: _C.accent),
                             ),
                           ],
@@ -294,11 +297,11 @@ class _TasksScreenState extends State<TasksScreen>
               onTap: (_) => setState(() {}),
               labelColor: _C.accent,
               unselectedLabelColor: _C.subText,
-              labelStyle: const TextStyle(
+              labelStyle: TextStyle(
                   fontWeight: FontWeight.w600, fontSize: 13),
-              unselectedLabelStyle: const TextStyle(fontSize: 13),
+              unselectedLabelStyle: TextStyle(fontSize: 13),
               indicator: UnderlineTabIndicator(
-                borderSide: const BorderSide(color: _C.accent, width: 2),
+                borderSide: BorderSide(color: _C.accent, width: 2),
                 borderRadius: BorderRadius.circular(2),
               ),
               dividerColor: _C.divider,
@@ -316,7 +319,7 @@ class _TasksScreenState extends State<TasksScreen>
               stream: _service.tasksStream(widget.uid),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(
+                  return Center(
                     child: CircularProgressIndicator(
                         color: _C.accent, strokeWidth: 2),
                   );
@@ -359,9 +362,13 @@ class _TasksScreenState extends State<TasksScreen>
 
   // ── Subject filter popup ───────────────────────────────────────────────────
   void _showSubjectFilter() async {
+    // Capture current theme colors
+    final surface = _C.surface;
+    final divider = _C.divider;
+    
     final result = await showModalBottomSheet<String?>(
       context: context,
-      backgroundColor: _C.surface,
+      backgroundColor: surface,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => Padding(
@@ -370,7 +377,7 @@ class _TasksScreenState extends State<TasksScreen>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Filter by Subject',
+            Text('Filter by Subject',
                 style: TextStyle(
                     color: _C.text,
                     fontSize: 16,
@@ -378,7 +385,7 @@ class _TasksScreenState extends State<TasksScreen>
             const SizedBox(height: 16),
             // "All" option
             _filterTile(ctx, null, 'All subjects', Icons.layers_outlined),
-            const Divider(color: _C.divider, height: 1),
+            Divider(color: divider, height: 1),
             ..._subjects.map((s) =>
                 _filterTile(ctx, s, s, Icons.book_outlined)),
           ],
@@ -404,7 +411,7 @@ class _TasksScreenState extends State<TasksScreen>
               fontWeight:
                   selected ? FontWeight.w600 : FontWeight.normal)),
       trailing: selected
-          ? const Icon(Icons.check_rounded, color: _C.accent, size: 18)
+          ? Icon(Icons.check_rounded, color: _C.accent, size: 18)
           : null,
       onTap: () => Navigator.pop(ctx, value ?? ''),
     );
@@ -426,7 +433,7 @@ class _TasksScreenState extends State<TasksScreen>
                   size: 36, color: Color(0xFF444444)),
             ),
             const SizedBox(height: 20),
-            const Text('No tasks yet',
+            Text('No tasks yet',
                 style: TextStyle(
                     color: _C.subText,
                     fontSize: 18,
@@ -445,7 +452,7 @@ class _TasksScreenState extends State<TasksScreen>
             const Icon(Icons.search_off_rounded,
                 size: 48, color: Color(0xFF444444)),
             const SizedBox(height: 16),
-            const Text('No tasks match this filter',
+            Text('No tasks match this filter',
                 style: TextStyle(color: _C.subText, fontSize: 15)),
           ],
         ),
@@ -476,9 +483,9 @@ class _TaskCard extends StatelessWidget {
       background: Container(
         margin: const EdgeInsets.only(bottom: 10),
         decoration: BoxDecoration(
-          color: Colors.redAccent.withValues(alpha: 0.15),
+          color: Colors.redAccent.withAlpha(38),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+          border: Border.all(color: Colors.redAccent.withAlpha(77)),
         ),
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 20),
@@ -495,13 +502,11 @@ class _TaskCard extends StatelessWidget {
           margin: const EdgeInsets.only(bottom: 10),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
-            color: task.isDone
-                ? const Color(0xFF141414)
-                : const Color(0xFF1A1A1A),
+            color: _C.surface,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: task.isOverdue
-                  ? Colors.redAccent.withValues(alpha: 0.4)
+                  ? Colors.redAccent.withAlpha(102)
                   : _C.divider,
             ),
           ),
@@ -519,15 +524,15 @@ class _TaskCard extends StatelessWidget {
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: task.isDone
-                        ? _C.accent.withValues(alpha: 0.2)
+                        ? _C.accent.withAlpha(51)
                         : Colors.transparent,
                     border: Border.all(
-                      color: task.isDone ? _C.accent : const Color(0xFF555555),
+                      color: task.isDone ? _C.accent : _C.divider,
                       width: 1.5,
                     ),
                   ),
                   child: task.isDone
-                      ? const Icon(Icons.check_rounded,
+                      ? Icon(Icons.check_rounded,
                           size: 13, color: _C.accent)
                       : null,
                 ),
@@ -544,14 +549,14 @@ class _TaskCard extends StatelessWidget {
                       task.title,
                       style: TextStyle(
                         color: task.isDone
-                            ? const Color(0xFF555555)
+                            ? _C.subText
                             : _C.text,
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
                         decoration: task.isDone
                             ? TextDecoration.lineThrough
                             : null,
-                        decorationColor: const Color(0xFF555555),
+                        decorationColor: _C.subText,
                       ),
                     ),
                     if (task.description != null &&
@@ -561,8 +566,8 @@ class _TaskCard extends StatelessWidget {
                         task.description!,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: Color(0xFF666666), fontSize: 12),
+                        style: TextStyle(
+                            color: _C.subText, fontSize: 12),
                       ),
                     ],
                     const SizedBox(height: 8),
@@ -582,7 +587,7 @@ class _TaskCard extends StatelessWidget {
                           _metaChip(
                             icon: Icons.book_outlined,
                             label: task.subject!,
-                            color: const Color(0xFF8B93A6),
+                            color: _C.accent,
                           ),
                         // Due date
                         if (task.dueDate != null)
@@ -591,7 +596,7 @@ class _TaskCard extends StatelessWidget {
                             label: task.dueDateLabel,
                             color: task.isOverdue
                                 ? Colors.redAccent
-                                : const Color(0xFF74957C),
+                                : _C.accent,
                           ),
                       ],
                     ),
@@ -600,10 +605,10 @@ class _TaskCard extends StatelessWidget {
               ),
 
               // Edit icon
-              const Padding(
-                padding: EdgeInsets.only(left: 8, top: 2),
+              Padding(
+                padding: const EdgeInsets.only(left: 8, top: 2),
                 child: Icon(Icons.edit_outlined,
-                    size: 15, color: Color(0xFF444444)),
+                    size: 15, color: _C.subText),
               ),
             ],
           ),
@@ -619,9 +624,9 @@ class _TaskCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
+        color: color.withAlpha(26),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withValues(alpha: 0.25)),
+        border: Border.all(color: color.withAlpha(64)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -719,9 +724,13 @@ class _TaskSheetState extends State<_TaskSheet> {
     final box = btnCtx.findRenderObject() as RenderBox;
     final offset = box.localToGlobal(Offset.zero);
 
+    // Capture current theme colors
+    final surface = _C.surface;
+    final text = _C.text;
+
     final result = await showMenu<TaskPriority>(
       context: context,
-      color: const Color(0xFF1E1E1E),
+      color: surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       position: RelativeRect.fromLTRB(
         offset.dx,
@@ -737,7 +746,7 @@ class _TaskSheetState extends State<_TaskSheet> {
             const SizedBox(width: 10),
             Text(p.label,
                 style: TextStyle(
-                    color: _priority == p ? p.color : _C.text,
+                    color: _priority == p ? p.color : text,
                     fontWeight: _priority == p
                         ? FontWeight.w700
                         : FontWeight.normal,
@@ -758,60 +767,67 @@ class _TaskSheetState extends State<_TaskSheet> {
     final box = btnCtx.findRenderObject() as RenderBox;
     final offset = box.localToGlobal(Offset.zero);
 
+    // Capture current theme colors
+    final surface = _C.surface;
+    final accent = _C.accent;
+    final text = _C.text;
+    final subText = _C.subText;
+    final divider = _C.divider;
+
     final items = <PopupMenuEntry<String>>[
       // None option
       PopupMenuItem<String>(
         value: '__none__',
         child: Row(
           children: [
-            const Icon(Icons.block, size: 13, color: _C.subText),
+            Icon(Icons.block, size: 13, color: subText),
             const SizedBox(width: 10),
             Text('None',
                 style: TextStyle(
-                    color: _subject == null ? _C.accent : _C.subText,
+                    color: _subject == null ? accent : subText,
                     fontWeight: _subject == null
                         ? FontWeight.w600
                         : FontWeight.normal,
                     fontSize: 13)),
             if (_subject == null) ...[
               const Spacer(),
-              const Icon(Icons.check_rounded, size: 14, color: _C.accent),
+              Icon(Icons.check_rounded, size: 14, color: accent),
             ],
           ],
         ),
       ),
-      if (_localSubjects.isNotEmpty) const PopupMenuDivider(),
+      if (_localSubjects.isNotEmpty) PopupMenuDivider(height: 1, color: divider),
       ..._localSubjects.map((s) => PopupMenuItem<String>(
             value: s,
             child: Row(
               children: [
-                const Icon(Icons.book_outlined, size: 13, color: _C.subText),
+                Icon(Icons.book_outlined, size: 13, color: subText),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(s,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                          color: _subject == s ? _C.accent : _C.text,
+                          color: _subject == s ? accent : text,
                           fontWeight: _subject == s
                               ? FontWeight.w600
                               : FontWeight.normal,
                           fontSize: 13)),
                 ),
                 if (_subject == s)
-                  const Icon(Icons.check_rounded,
-                      size: 14, color: _C.accent),
+                  Icon(Icons.check_rounded,
+                      size: 14, color: accent),
               ],
             ),
           )),
-      const PopupMenuDivider(),
-      const PopupMenuItem<String>(
+      PopupMenuDivider(height: 1, color: divider),
+      PopupMenuItem<String>(
         value: '__add__',
         child: Row(
           children: [
-            Icon(Icons.add_circle_outline, size: 14, color: _C.accent),
-            SizedBox(width: 10),
+            Icon(Icons.add_circle_outline, size: 14, color: accent),
+            const SizedBox(width: 10),
             Text('Add subject',
-                style: TextStyle(color: _C.accent, fontSize: 13)),
+                style: TextStyle(color: accent, fontSize: 13)),
           ],
         ),
       ),
@@ -819,7 +835,7 @@ class _TaskSheetState extends State<_TaskSheet> {
 
     final result = await showMenu<String>(
       context: context,
-      color: const Color(0xFF1E1E1E),
+      color: surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       position: RelativeRect.fromLTRB(
         offset.dx,
@@ -845,25 +861,25 @@ class _TaskSheetState extends State<_TaskSheet> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1A1A1A),
+        backgroundColor: _C.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Add Subject',
+        title: Text('Add Subject',
             style: TextStyle(color: _C.text, fontWeight: FontWeight.bold)),
         content: TextField(
           controller: ctrl,
           autofocus: true,
-          style: const TextStyle(color: _C.text, fontSize: 14),
+          style: TextStyle(color: _C.text, fontSize: 14),
           cursorColor: _C.accent,
           decoration: InputDecoration(
             hintText: 'e.g. Mathematics',
-            hintStyle: const TextStyle(color: _C.subText),
+            hintStyle: TextStyle(color: _C.subText),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: Color(0xFF2A2A2A)),
+              borderSide: BorderSide(color: _C.divider),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: _C.accent),
+              borderSide: BorderSide(color: _C.accent),
             ),
           ),
           onSubmitted: (_) => _confirmAddSubject(ctrl, ctx),
@@ -871,7 +887,7 @@ class _TaskSheetState extends State<_TaskSheet> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel',
+            child: Text('Cancel',
                 style: TextStyle(color: _C.subText)),
           ),
           ElevatedButton(
@@ -882,9 +898,9 @@ class _TaskSheetState extends State<_TaskSheet> {
                   borderRadius: BorderRadius.circular(8)),
             ),
             onPressed: () => _confirmAddSubject(ctrl, ctx),
-            child: const Text('Add',
+            child: Text('Add',
                 style: TextStyle(
-                    color: Colors.black, fontWeight: FontWeight.bold)),
+                    color: _C.isDark ? Colors.white : Colors.black, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -904,17 +920,25 @@ class _TaskSheetState extends State<_TaskSheet> {
   }
 
   Future<void> _pickDate() async {
+    final isDark = ThemeService().currentTheme.isDark;
     final picked = await showDatePicker(
       context: context,
       initialDate: _dueDate ?? DateTime.now(),
       firstDate: DateTime.now().subtract(const Duration(days: 1)),
       lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
       builder: (ctx, child) => Theme(
-        data: ThemeData.dark().copyWith(
-          colorScheme: const ColorScheme.dark(
-            primary: Color(0xFFD4A24C),
-            onPrimary: Colors.black,
-            surface: Color(0xFF1A1A1A),
+        data: ThemeData(
+          brightness: isDark ? Brightness.dark : Brightness.light,
+          colorScheme: ColorScheme(
+            brightness: isDark ? Brightness.dark : Brightness.light,
+            primary: _C.accent,
+            onPrimary: isDark ? Colors.black : Colors.white,
+            secondary: _C.accent,
+            onSecondary: isDark ? Colors.black : Colors.white,
+            surface: _C.surface,
+            onSurface: _C.text,
+            error: Colors.redAccent,
+            onError: Colors.white,
           ),
         ),
         child: child!,
@@ -931,8 +955,8 @@ class _TaskSheetState extends State<_TaskSheet> {
     return Container(
       constraints: BoxConstraints(maxHeight: screenHeight * 0.92),
       padding: EdgeInsets.fromLTRB(24, 20, 24, 24 + bottom),
-      decoration: const BoxDecoration(
-        color: Color(0xFF111111),
+      decoration: BoxDecoration(
+        color: _C.surface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Form(
@@ -949,7 +973,7 @@ class _TaskSheetState extends State<_TaskSheet> {
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF333333),
+                  color: _C.divider,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -959,7 +983,7 @@ class _TaskSheetState extends State<_TaskSheet> {
             // Title
             Text(
               _isEditing ? 'Edit Task' : 'New Task',
-              style: const TextStyle(
+              style: TextStyle(
                   color: _C.text,
                   fontSize: 18,
                   fontWeight: FontWeight.bold),
@@ -972,7 +996,7 @@ class _TaskSheetState extends State<_TaskSheet> {
             TextFormField(
               controller: _titleCtrl,
               autofocus: !_isEditing,
-              style: const TextStyle(color: _C.text, fontSize: 14),
+              style: TextStyle(color: _C.text, fontSize: 14),
               cursorColor: _C.accent,
               decoration: _inputDec('e.g. Read chapter 3'),
               validator: (v) => (v == null || v.trim().isEmpty)
@@ -988,7 +1012,7 @@ class _TaskSheetState extends State<_TaskSheet> {
             TextFormField(
               controller: _descCtrl,
               maxLines: 2,
-              style: const TextStyle(color: _C.text, fontSize: 14),
+              style: TextStyle(color: _C.text, fontSize: 14),
               cursorColor: _C.accent,
               decoration: _inputDec('Add details…'),
             ),
@@ -1011,10 +1035,10 @@ class _TaskSheetState extends State<_TaskSheet> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 14, vertical: 12),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF1A1A1A),
+                            color: _C.bg,
                             borderRadius: BorderRadius.circular(10),
                             border: Border.all(
-                                color: _priority.color.withValues(alpha: 0.3)),
+                                color: _priority.color.withAlpha(77)),
                           ),
                           child: Row(
                             children: [
@@ -1054,13 +1078,13 @@ class _TaskSheetState extends State<_TaskSheet> {
                               horizontal: 14, vertical: 12),
                           decoration: BoxDecoration(
                             color: _subject != null
-                                ? _C.accent.withValues(alpha: 0.08)
-                                : const Color(0xFF1A1A1A),
+                                ? _C.accent.withAlpha(20)
+                                : _C.bg,
                             borderRadius: BorderRadius.circular(10),
                             border: Border.all(
                               color: _subject != null
-                                  ? _C.accent.withValues(alpha: 0.35)
-                                  : const Color(0xFF2A2A2A),
+                                  ? _C.accent.withAlpha(89)
+                                  : _C.divider,
                             ),
                           ),
                           child: Row(
@@ -1113,9 +1137,9 @@ class _TaskSheetState extends State<_TaskSheet> {
                 padding: const EdgeInsets.symmetric(
                     horizontal: 14, vertical: 12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1A1A1A),
+                  color: _C.bg,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFF2A2A2A)),
+                  border: Border.all(color: _C.divider),
                 ),
                 child: Row(
                   children: [
@@ -1123,7 +1147,7 @@ class _TaskSheetState extends State<_TaskSheet> {
                       Icons.calendar_today_outlined,
                       size: 15,
                       color: _dueDate != null
-                          ? const Color(0xFF74957C)
+                          ? _C.accent
                           : _C.subText,
                     ),
                     const SizedBox(width: 10),
@@ -1143,7 +1167,7 @@ class _TaskSheetState extends State<_TaskSheet> {
                     if (_dueDate != null)
                       GestureDetector(
                         onTap: () => setState(() => _dueDate = null),
-                        child: const Icon(Icons.close,
+                        child: Icon(Icons.close,
                             size: 14, color: _C.subText),
                       ),
                   ],
@@ -1162,21 +1186,21 @@ class _TaskSheetState extends State<_TaskSheet> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _C.accent,
                   disabledBackgroundColor:
-                      _C.accent.withValues(alpha: 0.4),
+                      _C.accent.withAlpha(102),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12)),
                   elevation: 0,
                 ),
                 child: _saving
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(
-                            color: Colors.black, strokeWidth: 2))
+                            color: _C.isDark ? Colors.white : Colors.black, strokeWidth: 2))
                     : Text(
                         _isEditing ? 'Save Changes' : 'Add Task',
-                        style: const TextStyle(
-                            color: Colors.black,
+                        style: TextStyle(
+                            color: _C.isDark ? Colors.white : Colors.black,
                             fontWeight: FontWeight.bold,
                             fontSize: 15),
                       ),
@@ -1191,7 +1215,7 @@ class _TaskSheetState extends State<_TaskSheet> {
 
   Widget _label(String text) => Text(
         text,
-        style: const TextStyle(
+        style: TextStyle(
             color: _C.subText,
             fontSize: 11,
             fontWeight: FontWeight.w600,
@@ -1201,7 +1225,7 @@ class _TaskSheetState extends State<_TaskSheet> {
   InputDecoration _inputDec(String hint) => InputDecoration(
         hintText: hint,
         hintStyle:
-            const TextStyle(color: Color(0xFF555555), fontSize: 13),
+            TextStyle(color: Color(0xFF555555), fontSize: 13),
         filled: true,
         fillColor: const Color(0xFF1A1A1A),
         contentPadding:
@@ -1212,7 +1236,7 @@ class _TaskSheetState extends State<_TaskSheet> {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: _C.accent),
+          borderSide: BorderSide(color: _C.accent),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
@@ -1223,6 +1247,6 @@ class _TaskSheetState extends State<_TaskSheet> {
           borderSide: const BorderSide(color: Colors.redAccent),
         ),
         errorStyle:
-            const TextStyle(color: Colors.redAccent, fontSize: 11),
+            TextStyle(color: Colors.redAccent, fontSize: 11),
       );
 }
