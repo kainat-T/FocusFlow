@@ -4,6 +4,7 @@ import '../models/task_model.dart';
 import '../services/auth_service.dart';
 import '../services/task_service.dart';
 import '../services/theme_service.dart';
+import '../services/notification_service.dart';
 
 // ── Colour constants (delegates to ThemeService) ───────────────────────────
 class _C {
@@ -81,13 +82,11 @@ class _TasksScreenState extends State<TasksScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // reload subjects when app comes back to foreground
     if (state == AppLifecycleState.resumed) {
       _loadSubjects();
     }
   }
 
-  // Also reload when the widget is built (e.g. tab switch)
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -98,9 +97,7 @@ class _TasksScreenState extends State<TasksScreen>
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
     final saved = prefs.getStringList(_kSubjectsKey) ?? [];
-    // merge prefs list with whatever home_screen already passed in
     final merged = {...widget.initialSubjects, ...saved}.toList();
-    // write merged back so both screens stay in sync
     if (merged.length != saved.length) {
       await prefs.setStringList(_kSubjectsKey, merged);
     }
@@ -121,6 +118,38 @@ class _TasksScreenState extends State<TasksScreen>
     }
   }
 
+  // ── Reminders for pending tasks ────────────────────────────────────────────
+  /// Schedule a notification for each pending task's due date.
+  Future<void> _schedulePendingTaskReminders(List<TaskModel> tasks) async {
+    final now = DateTime.now();
+    for (final task in tasks) {
+      if (task.isDone || task.dueDate == null) continue;
+      if (task.dueDate!.isBefore(now)) continue;
+
+      final secondsFromNow = task.dueDate!.difference(now).inSeconds;
+      if (secondsFromNow < 60) continue;
+
+      await NotificationService().scheduleSessionReminder(
+        id: task.id.hashCode.abs() % 100000,
+        secondsFromNow: secondsFromNow,
+        title: 'Task Reminder',
+        body:
+            '${task.title}${task.subject != null ? ' (${task.subject})' : ''} is due soon!',
+      );
+    }
+  }
+
+  /// Cancel reminders for done or overdue tasks.
+  Future<void> _cancelTaskReminders(List<TaskModel> tasks) async {
+    final now = DateTime.now();
+    for (final task in tasks) {
+      if (task.isDone || task.dueDate == null) continue;
+      if (task.dueDate!.isBefore(now)) continue;
+
+      await NotificationService().cancelReminder(task.id.hashCode.abs() % 100000);
+    }
+  }
+
   // ── Show add / edit bottom sheet ───────────────────────────────────────────
   void _openTaskSheet({TaskModel? existing}) {
     showModalBottomSheet(
@@ -132,7 +161,6 @@ class _TasksScreenState extends State<TasksScreen>
         subjects: List<String>.from(_subjects),
         existing: existing,
         onSubjectAdded: (newSubject) async {
-          // persist to SharedPreferences so HomeScreen picks it up
           final prefs = await SharedPreferences.getInstance();
           final updated = List<String>.from(_subjects);
           if (!updated.contains(newSubject)) {
@@ -215,7 +243,6 @@ class _TasksScreenState extends State<TasksScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _C.bg,
-      // header row with subject filter + tab bar
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -233,7 +260,6 @@ class _TasksScreenState extends State<TasksScreen>
                   ),
                 ),
                 const Spacer(),
-                // Subject filter chip
                 if (_subjects.isNotEmpty)
                   GestureDetector(
                     onTap: _showSubjectFilter,
@@ -329,6 +355,9 @@ class _TasksScreenState extends State<TasksScreen>
                 final filtered =
                     _applyFilters(all, _tabCtrl.index);
 
+                // Schedule reminders for pending tasks with due dates
+                _schedulePendingTaskReminders(all);
+
                 if (all.isEmpty) return _buildEmpty();
                 if (filtered.isEmpty) return _buildEmptyFilter();
 
@@ -337,8 +366,10 @@ class _TasksScreenState extends State<TasksScreen>
                   itemCount: filtered.length,
                   itemBuilder: (ctx, i) => _TaskCard(
                     task: filtered[i],
-                    onToggle: () =>
-                        _service.toggleDone(widget.uid, filtered[i]),
+                    onToggle: () async {
+                      await _service.toggleDone(widget.uid, filtered[i]);
+                      await _cancelTaskReminders(filtered);
+                    },
                     onEdit: () => _openTaskSheet(existing: filtered[i]),
                     onDelete: () => _deleteTask(filtered[i]),
                   ),
@@ -362,10 +393,9 @@ class _TasksScreenState extends State<TasksScreen>
 
   // ── Subject filter popup ───────────────────────────────────────────────────
   void _showSubjectFilter() async {
-    // Capture current theme colors
     final surface = _C.surface;
     final divider = _C.divider;
-    
+
     final result = await showModalBottomSheet<String?>(
       context: context,
       backgroundColor: surface,
@@ -383,23 +413,19 @@ class _TasksScreenState extends State<TasksScreen>
                     fontSize: 16,
                     fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
-            // "All" option
-            _filterTile(ctx, null, 'All subjects', Icons.layers_outlined),
+            _filterTile(null, 'All subjects', Icons.layers_outlined),
             Divider(color: divider, height: 1),
-            ..._subjects.map((s) =>
-                _filterTile(ctx, s, s, Icons.book_outlined)),
+            ..._subjects.map((s) => _filterTile(s, s, Icons.book_outlined)),
           ],
         ),
       ),
     );
-    // result == '' means "All", non-null non-empty means a subject
     if (result != null) {
       setState(() => _filterSubject = result.isEmpty ? null : result);
     }
   }
 
-  Widget _filterTile(
-      BuildContext ctx, String? value, String label, IconData icon) {
+  Widget _filterTile(String? value, String label, IconData icon) {
     final selected = _filterSubject == value;
     return ListTile(
       contentPadding: EdgeInsets.zero,
@@ -413,7 +439,7 @@ class _TasksScreenState extends State<TasksScreen>
       trailing: selected
           ? Icon(Icons.check_rounded, color: _C.accent, size: 18)
           : null,
-      onTap: () => Navigator.pop(ctx, value ?? ''),
+      onTap: () => Navigator.pop(context, value ?? ''),
     );
   }
 
@@ -494,7 +520,7 @@ class _TaskCard extends StatelessWidget {
       ),
       confirmDismiss: (_) async {
         onDelete();
-        return false; // we handle deletion ourselves via the dialog
+        return false;
       },
       child: GestureDetector(
         onTap: onEdit,
@@ -513,7 +539,6 @@ class _TaskCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Checkbox
               GestureDetector(
                 onTap: onToggle,
                 child: AnimatedContainer(
@@ -540,7 +565,6 @@ class _TaskCard extends StatelessWidget {
 
               const SizedBox(width: 14),
 
-              // Content
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -571,25 +595,21 @@ class _TaskCard extends StatelessWidget {
                       ),
                     ],
                     const SizedBox(height: 8),
-                    // Meta chips row
                     Wrap(
                       spacing: 6,
                       runSpacing: 4,
                       children: [
-                        // Priority
                         _metaChip(
                           icon: task.priority.icon,
                           label: task.priority.label,
                           color: task.priority.color,
                         ),
-                        // Subject
                         if (task.subject != null)
                           _metaChip(
                             icon: Icons.book_outlined,
                             label: task.subject!,
                             color: _C.accent,
                           ),
-                        // Due date
                         if (task.dueDate != null)
                           _metaChip(
                             icon: Icons.calendar_today_outlined,
@@ -604,7 +624,6 @@ class _TaskCard extends StatelessWidget {
                 ),
               ),
 
-              // Edit icon
               Padding(
                 padding: const EdgeInsets.only(left: 8, top: 2),
                 child: Icon(Icons.edit_outlined,
@@ -682,7 +701,6 @@ class _TaskSheetState extends State<_TaskSheet> {
   DateTime? _dueDate;
   bool _saving = false;
 
-  // local copy of subjects so we can add inside the sheet
   late List<String> _localSubjects;
 
   bool get _isEditing => widget.existing != null;
@@ -719,12 +737,10 @@ class _TaskSheetState extends State<_TaskSheet> {
     if (mounted) Navigator.pop(context);
   }
 
-  // ── Priority popup ─────────────────────────────────────────────────────────
   void _showPriorityMenu(BuildContext btnCtx) async {
     final box = btnCtx.findRenderObject() as RenderBox;
     final offset = box.localToGlobal(Offset.zero);
 
-    // Capture current theme colors
     final surface = _C.surface;
     final text = _C.text;
 
@@ -762,12 +778,10 @@ class _TaskSheetState extends State<_TaskSheet> {
     if (result != null) setState(() => _priority = result);
   }
 
-  // ── Subject popup ──────────────────────────────────────────────────────────
   void _showSubjectMenu(BuildContext btnCtx) async {
     final box = btnCtx.findRenderObject() as RenderBox;
     final offset = box.localToGlobal(Offset.zero);
 
-    // Capture current theme colors
     final surface = _C.surface;
     final accent = _C.accent;
     final text = _C.text;
@@ -775,7 +789,6 @@ class _TaskSheetState extends State<_TaskSheet> {
     final divider = _C.divider;
 
     final items = <PopupMenuEntry<String>>[
-      // None option
       PopupMenuItem<String>(
         value: '__none__',
         child: Row(
@@ -855,7 +868,6 @@ class _TaskSheetState extends State<_TaskSheet> {
     }
   }
 
-  // ── Add subject dialog ─────────────────────────────────────────────────────
   void _showAddSubjectDialog() {
     final ctrl = TextEditingController();
     showDialog(
@@ -913,9 +925,8 @@ class _TaskSheetState extends State<_TaskSheet> {
     if (name.isEmpty || _localSubjects.contains(name)) return;
     setState(() {
       _localSubjects.add(name);
-      _subject = name; // auto-select the newly added subject
+      _subject = name;
     });
-    // persist back to SharedPreferences + update TasksScreen list
     widget.onSubjectAdded(name);
   }
 
@@ -965,250 +976,241 @@ class _TaskSheetState extends State<_TaskSheet> {
           physics: const ClampingScrollPhysics(),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Handle
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: _C.divider,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Title
-            Text(
-              _isEditing ? 'Edit Task' : 'New Task',
-              style: TextStyle(
-                  color: _C.text,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 20),
-
-            // Task title field
-            _label('Task'),
-            const SizedBox(height: 6),
-            TextFormField(
-              controller: _titleCtrl,
-              autofocus: !_isEditing,
-              style: TextStyle(color: _C.text, fontSize: 14),
-              cursorColor: _C.accent,
-              decoration: _inputDec('e.g. Read chapter 3'),
-              validator: (v) => (v == null || v.trim().isEmpty)
-                  ? 'Task title is required'
-                  : null,
-            ),
-
-            const SizedBox(height: 14),
-
-            // Description field
-            _label('Notes (optional)'),
-            const SizedBox(height: 6),
-            TextFormField(
-              controller: _descCtrl,
-              maxLines: 2,
-              style: TextStyle(color: _C.text, fontSize: 14),
-              cursorColor: _C.accent,
-              decoration: _inputDec('Add details…'),
-            ),
-
-            const SizedBox(height: 14),
-
-            // Priority + Subject row
-            Row(
-              children: [
-                // Priority
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _label('Priority'),
-                      const SizedBox(height: 6),
-                      Builder(builder: (btnCtx) => GestureDetector(
-                        onTap: () => _showPriorityMenu(btnCtx),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 12),
-                          decoration: BoxDecoration(
-                            color: _C.bg,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                                color: _priority.color.withAlpha(77)),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(_priority.icon,
-                                  size: 14, color: _priority.color),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(_priority.label,
-                                    style: TextStyle(
-                                        color: _priority.color,
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600)),
-                              ),
-                              Icon(Icons.keyboard_arrow_down_rounded,
-                                  size: 16, color: _priority.color),
-                            ],
-                          ),
-                        ),
-                      )),
-                    ],
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: _C.divider,
+                    borderRadius: BorderRadius.circular(2),
                   ),
                 ),
+              ),
+              const SizedBox(height: 16),
 
-                const SizedBox(width: 12),
+              Text(
+                _isEditing ? 'Edit Task' : 'New Task',
+                style: TextStyle(
+                    color: _C.text,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 20),
 
-                // Subject
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _label('Subject'),
-                      const SizedBox(height: 6),
-                      Builder(builder: (btnCtx) => GestureDetector(
-                        onTap: () => _showSubjectMenu(btnCtx),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 12),
-                          decoration: BoxDecoration(
-                            color: _subject != null
-                                ? _C.accent.withAlpha(20)
-                                : _C.bg,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: _subject != null
-                                  ? _C.accent.withAlpha(89)
-                                  : _C.divider,
+              _label('Task'),
+              const SizedBox(height: 6),
+              TextFormField(
+                controller: _titleCtrl,
+                autofocus: !_isEditing,
+                style: TextStyle(color: _C.text, fontSize: 14),
+                cursorColor: _C.accent,
+                decoration: _inputDec('e.g. Read chapter 3'),
+                validator: (v) => (v == null || v.trim().isEmpty)
+                    ? 'Task title is required'
+                    : null,
+              ),
+
+              const SizedBox(height: 14),
+
+              _label('Notes (optional)'),
+              const SizedBox(height: 6),
+              TextFormField(
+                controller: _descCtrl,
+                maxLines: 2,
+                style: TextStyle(color: _C.text, fontSize: 14),
+                cursorColor: _C.accent,
+                decoration: _inputDec('Add details…'),
+              ),
+
+              const SizedBox(height: 14),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _label('Priority'),
+                        const SizedBox(height: 6),
+                        Builder(builder: (btnCtx) => GestureDetector(
+                          onTap: () => _showPriorityMenu(btnCtx),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: _C.bg,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                  color: _priority.color.withAlpha(77)),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(_priority.icon,
+                                    size: 14, color: _priority.color),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(_priority.label,
+                                      style: TextStyle(
+                                          color: _priority.color,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600)),
+                                ),
+                                Icon(Icons.keyboard_arrow_down_rounded,
+                                    size: 16, color: _priority.color),
+                              ],
                             ),
                           ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                _subject != null
-                                    ? Icons.book_outlined
-                                    : Icons.add_circle_outline,
-                                size: 14,
+                        )),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(width: 12),
+
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _label('Subject'),
+                        const SizedBox(height: 6),
+                        Builder(builder: (btnCtx) => GestureDetector(
+                          onTap: () => _showSubjectMenu(btnCtx),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: _subject != null
+                                  ? _C.accent.withAlpha(20)
+                                  : _C.bg,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
                                 color: _subject != null
-                                    ? _C.accent
-                                    : _C.subText,
+                                    ? _C.accent.withAlpha(89)
+                                    : _C.divider,
                               ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  _subject ?? 'None',
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                      color: _subject != null
-                                          ? _C.accent
-                                          : _C.subText,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600),
-                                ),
-                              ),
-                              Icon(Icons.keyboard_arrow_down_rounded,
-                                  size: 16,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _subject != null
+                                      ? Icons.book_outlined
+                                      : Icons.add_circle_outline,
+                                  size: 14,
                                   color: _subject != null
                                       ? _C.accent
-                                      : _C.subText),
-                            ],
+                                      : _C.subText,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _subject ?? 'None',
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                        color: _subject != null
+                                            ? _C.accent
+                                            : _C.subText,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                                Icon(Icons.keyboard_arrow_down_rounded,
+                                    size: 16,
+                                    color: _subject != null
+                                        ? _C.accent
+                                        : _C.subText),
+                              ],
+                            ),
+                          ),
+                        )),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 14),
+
+              _label('Due Date (optional)'),
+              const SizedBox(height: 6),
+              GestureDetector(
+                onTap: _pickDate,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: _C.bg,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: _C.divider),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.calendar_today_outlined,
+                        size: 15,
+                        color: _dueDate != null
+                            ? _C.accent
+                            : _C.subText,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _dueDate != null
+                              ? '${_dueDate!.day}/${_dueDate!.month}/${_dueDate!.year}'
+                              : 'Pick a date',
+                          style: TextStyle(
+                            color: _dueDate != null
+                                ? _C.text
+                                : _C.subText,
+                            fontSize: 13,
                           ),
                         ),
-                      )),
+                      ),
+                      if (_dueDate != null)
+                        GestureDetector(
+                          onTap: () => setState(() => _dueDate = null),
+                          child: Icon(Icons.close,
+                              size: 14, color: _C.subText),
+                        ),
                     ],
                   ),
                 ),
-              ],
-            ),
+              ),
 
-            const SizedBox(height: 14),
+              const SizedBox(height: 24),
 
-            // Due date
-            _label('Due Date (optional)'),
-            const SizedBox(height: 6),
-            GestureDetector(
-              onTap: _pickDate,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 14, vertical: 12),
-                decoration: BoxDecoration(
-                  color: _C.bg,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _C.divider),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.calendar_today_outlined,
-                      size: 15,
-                      color: _dueDate != null
-                          ? _C.accent
-                          : _C.subText,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        _dueDate != null
-                            ? '${_dueDate!.day}/${_dueDate!.month}/${_dueDate!.year}'
-                            : 'Pick a date',
-                        style: TextStyle(
-                          color: _dueDate != null
-                              ? _C.text
-                              : _C.subText,
-                          fontSize: 13,
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: _saving ? null : _save,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _C.accent,
+                    disabledBackgroundColor:
+                        _C.accent.withAlpha(102),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    elevation: 0,
+                  ),
+                  child: _saving
+                      ? SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                              color: _C.isDark ? Colors.white : Colors.black, strokeWidth: 2))
+                      : Text(
+                          _isEditing ? 'Save Changes' : 'Add Task',
+                          style: TextStyle(
+                              color: _C.isDark ? Colors.white : Colors.black,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15),
                         ),
-                      ),
-                    ),
-                    if (_dueDate != null)
-                      GestureDetector(
-                        onTap: () => setState(() => _dueDate = null),
-                        child: Icon(Icons.close,
-                            size: 14, color: _C.subText),
-                      ),
-                  ],
                 ),
               ),
-            ),
-
-            const SizedBox(height: 24),
-
-            // Save button
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton(
-                onPressed: _saving ? null : _save,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _C.accent,
-                  disabledBackgroundColor:
-                      _C.accent.withAlpha(102),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  elevation: 0,
-                ),
-                child: _saving
-                    ? SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                            color: _C.isDark ? Colors.white : Colors.black, strokeWidth: 2))
-                    : Text(
-                        _isEditing ? 'Save Changes' : 'Add Task',
-                        style: TextStyle(
-                            color: _C.isDark ? Colors.white : Colors.black,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15),
-                      ),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
-        ), // SingleChildScrollView
       ),
     );
   }

@@ -3,7 +3,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/auth_service.dart';
-import '../services/notification_service.dart';
 import '../services/session_service.dart';
 import '../services/theme_service.dart';
 import '../widgets/background_pattern.dart';
@@ -59,18 +58,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadSubjects();
-    _loadReminderPrefs();
     ThemeService().addListener(_onThemeChanged);
-  }
-
-  Future<void> _loadReminderPrefs() async {
-    final enabled = await ReminderPrefs.isEnabled();
-    final seconds = await ReminderPrefs.getSeconds();
-    if (!mounted) return;
-    setState(() {
-      _reminderEnabled = enabled;
-      _reminderSeconds = seconds;
-    });
   }
 
   void _onThemeChanged() {
@@ -114,11 +102,6 @@ class _HomeScreenState extends State<HomeScreen> {
   TimerState _timerState = TimerState.idle;
   Timer? _timer;
 
-  // ── session reminder ──────────────────────────────────────────────────────
-  bool _reminderEnabled = false;
-  int _reminderSeconds = 60;
-  int? _reminderTimerId;
-
   // ── nav ───────────────────────────────────────────────────────────────────
   NavTab _currentTab = NavTab.home;
 
@@ -128,12 +111,6 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── timer helpers ─────────────────────────────────────────────────────────
   void _startTimer() {
     final int sessionStartSeconds = _remaining;
-
-    if (_reminderEnabled && _remaining > 0) {
-      final remindAt = _remaining - _reminderSeconds;
-      final delay = remindAt > 0 ? remindAt : 0;
-      _scheduleReminder(delay);
-    }
 
     setState(() => _timerState = TimerState.running);
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -155,26 +132,6 @@ class _HomeScreenState extends State<HomeScreen> {
       subject: _selectedSubject,
       durationSeconds: totalSeconds,
     );
-    _cancelReminder();
-  }
-
-  Future<void> _scheduleReminder(int secondsFromNow) async {
-    _cancelReminder();
-    final id = DateTime.now().millisecondsSinceEpoch % 100000;
-    _reminderTimerId = id;
-    await NotificationService().scheduleSessionReminder(
-      id: id,
-      secondsFromNow: secondsFromNow,
-      title: 'Focus Flow Reminder',
-      body: 'Your focus session is about to finish — stay on track!',
-    );
-  }
-
-  Future<void> _cancelReminder() async {
-    if (_reminderTimerId != null) {
-      await NotificationService().cancelReminder(_reminderTimerId!);
-      _reminderTimerId = null;
-    }
   }
 
   void _pauseTimer() {
@@ -584,8 +541,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(height: 28),
-                _buildReminderRow(),
-                const SizedBox(height: 12),
                 _buildTimerButtons(),
               ],
             ),
@@ -729,111 +684,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
-  }
-
-  // ── Reminder toggle row ───────────────────────────────────────────────────
-  Widget _buildReminderRow() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Reminder',
-              style: TextStyle(
-                color: _C.text,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Switch(
-              value: _reminderEnabled,
-              onChanged: _timerState == TimerState.idle
-                  ? (val) async {
-                      await ReminderPrefs.setEnabled(val);
-                      setState(() => _reminderEnabled = val);
-                    }
-                  : null,
-              activeThumbColor: _C.accent,
-            ),
-          ],
-        ),
-        const SizedBox(width: 16),
-        if (_reminderEnabled)
-          GestureDetector(
-            onTap: _timerState == TimerState.idle ? _pickReminderTime : null,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 14, vertical: 9),
-              decoration: BoxDecoration(
-                color: _timerState == TimerState.idle
-                    ? _C.accent.withAlpha(38)
-                    : _C.surface,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: _timerState == TimerState.idle
-                      ? _C.accent.withAlpha(128)
-                      : _C.border,
-                  width: 1.5,
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.notifications_outlined,
-                    size: 13,
-                    color: _timerState == TimerState.idle
-                        ? _C.accent
-                        : _C.subText,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _reminderLabel(_reminderSeconds),
-                    style: TextStyle(
-                      color: _timerState == TimerState.idle
-                          ? _C.text
-                          : _C.subText,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    size: 16,
-                    color: _timerState == TimerState.idle
-                        ? _C.accent
-                        : _C.subText,
-                  ),
-                ],
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  String _reminderLabel(int seconds) {
-    final m = seconds ~/ 60;
-    final s = seconds % 60;
-    if (m > 0) return '$m min${s > 0 ? ' $s sec' : ''}';
-    return '$s sec';
-  }
-
-  Future<void> _pickReminderTime() async {
-    final current = _reminderSeconds;
-    final result = await showDialog<int>(
-      context: context,
-      builder: (ctx) => _ReminderTimeDialog(initialSeconds: current),
-    );
-    if (result != null && result > 0) {
-      await ReminderPrefs.setSeconds(result);
-      setState(() => _reminderSeconds = result);
-    }
   }
 
   // ── Bottom navigation ─────────────────────────────────────────────────────
@@ -1290,130 +1140,6 @@ class _CustomTimeDialogState extends State<_CustomTimeDialog> {
               style: TextStyle(
                   color: isDark ? Colors.white : Colors.black,
                   fontWeight: FontWeight.bold)),
-        ),
-      ],
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Reminder time picker dialog
-// ---------------------------------------------------------------------------
-class _ReminderTimeDialog extends StatefulWidget {
-  final int initialSeconds;
-  const _ReminderTimeDialog({required this.initialSeconds});
-
-  @override
-  State<_ReminderTimeDialog> createState() => _ReminderTimeDialogState();
-}
-
-class _ReminderTimeDialogState extends State<_ReminderTimeDialog> {
-  late int _seconds;
-
-  @override
-  void initState() {
-    super.initState();
-    _seconds = widget.initialSeconds;
-  }
-
-  void _adjust(int delta) {
-    setState(() {
-      _seconds = (_seconds + delta).clamp(10, 3600);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final m = _seconds ~/ 60;
-    final s = _seconds % 60;
-    return AlertDialog(
-      backgroundColor: _C.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: Text(
-        'Reminder Time',
-        style: TextStyle(
-            color: _C.text, fontWeight: FontWeight.bold, fontSize: 17),
-      ),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            'Notify ${m > 0 ? '$m min' : ''}${s > 0 ? ' $s sec' : ''} before the session ends',
-            style: TextStyle(color: _C.subText, fontSize: 13),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _reminderSpinner('-', 10),
-              const SizedBox(width: 12),
-              Text(
-                '${_seconds.toString().padLeft(2, '0')}s',
-                style: TextStyle(
-                  color: _C.text,
-                  fontSize: 32,
-                  fontWeight: FontWeight.w300,
-                ),
-              ),
-              const SizedBox(width: 12),
-              _reminderSpinner('+', 10),
-            ],
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: Text('Cancel',
-              style: TextStyle(color: _C.subText)),
-        ),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: _C.accent,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8)),
-            elevation: 0,
-          ),
-          onPressed: () => Navigator.pop(context, _seconds),
-          child: Text('Set',
-              style: TextStyle(
-                  color: _C.isDark ? Colors.white : Colors.black,
-                  fontWeight: FontWeight.bold)),
-        ),
-      ],
-    );
-  }
-
-  Widget _reminderSpinner(String label, int delta) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          onPressed: () => _adjust(delta),
-          icon: Icon(
-            label == '+'
-                ? Icons.keyboard_arrow_up
-                : Icons.keyboard_arrow_down,
-            color: _C.accent,
-          ),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(),
-        ),
-        Text(
-          label,
-          style: TextStyle(color: _C.subText, fontSize: 18),
-        ),
-        IconButton(
-          onPressed: () => _adjust(-delta),
-          icon: Icon(
-            label == '+'
-                ? Icons.keyboard_arrow_down
-                : Icons.keyboard_arrow_up,
-            color: _C.accent,
-          ),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(),
         ),
       ],
     );
